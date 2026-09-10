@@ -1,0 +1,8 @@
+source,origin_line,action,old_positive,old_negative,new_positive,new_negative
+payment,5,delete,sales_shipping,sales_shipping,,
+payment,72,delete,sales_shipping,sales_shipping,,
+payment,14,update,,,refunded_expenses,refunded_expenses
+settlement,61,update,sales_other,sales_other,sales_product_charges,sales_product_charges
+settlement,63,update,sales_shipping,sales_shipping,sales_product_charges,sales_product_charges
+settlement,95,update,sales_shipping,sales_shipping,sales_product_charges,sales_product_charges
+settlement,118,update,sales_shipping,sales_shipping,sales_product_charges,sales_product_charges
