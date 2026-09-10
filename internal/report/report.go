@@ -77,6 +77,9 @@ func Write(path string, result domain.RunResult, metadata map[string]string) err
 	if err = writeInfo(f, metadata, styles); err != nil {
 		return err
 	}
+	if err = setPrintLayouts(f); err != nil {
+		return err
+	}
 	f.SetActiveSheet(0)
 	destination := filepath.Clean(path)
 	dir := filepath.Dir(destination)
@@ -104,6 +107,30 @@ func Write(path string, result domain.RunResult, metadata map[string]string) err
 	}
 	if err = os.Rename(tmpPath, destination); err != nil {
 		return fmt.Errorf("publish workbook: %w", err)
+	}
+	return nil
+}
+
+// setPrintLayouts keeps the finance-facing Summary readable when a workbook is
+// printed or converted to PDF. The audit sheets remain multi-page vertically,
+// but their columns are constrained to one page so a reader never loses the
+// meaning of a row across a horizontal page break.
+func setPrintLayouts(f *excelize.File) error {
+	landscape := "landscape"
+	fitWidth := 1
+	fitHeight := 1
+	fitPage := true
+	for _, sheet := range []string{"Summary", "Consolidated Data", "Source Rows", "Contributions", "Mapping Issues", "Run Info"} {
+		if err := f.SetSheetProps(sheet, &excelize.SheetPropsOptions{FitToPage: &fitPage}); err != nil {
+			return err
+		}
+		layout := &excelize.PageLayoutOptions{Orientation: &landscape, FitToWidth: &fitWidth}
+		if sheet == "Summary" {
+			layout.FitToHeight = &fitHeight
+		}
+		if err := f.SetPageLayout(sheet, layout); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -244,8 +271,15 @@ func writeSummary(f *excelize.File, r domain.RunResult, st map[string]int) error
 	setValue(f, sh, "B35", "Activity minus header control")
 	setValue(f, sh, "D35", reportAmount(sumSummary(r.Summary, domain.SourceSettlement)-r.SettlementHeader))
 	f.SetCellStyle(sh, "D35", "D35", st["money"])
-	f.SetColWidth(sh, "B", "B", 32)
-	f.SetColWidth(sh, "C", "E", 18)
+	if err := f.SetColWidth(sh, "B", "B", 30); err != nil {
+		return err
+	}
+	if err := f.SetColWidth(sh, "C", "D", 18); err != nil {
+		return err
+	}
+	if err := f.SetColWidth(sh, "E", "E", 26); err != nil {
+		return err
+	}
 	if err := f.SetSheetDimension(sh, "B1:E35"); err != nil {
 		return err
 	}
@@ -396,6 +430,12 @@ func writeIssues(f *excelize.File, r domain.RunResult, st map[string]int) error 
 }
 func writeInfo(f *excelize.File, m map[string]string, st map[string]int) error {
 	sh := "Run Info"
+	if err := f.SetColWidth(sh, "A", "A", 30); err != nil {
+		return err
+	}
+	if err := f.SetColWidth(sh, "B", "B", 100); err != nil {
+		return err
+	}
 	setValue(f, sh, "A1", "Property")
 	setValue(f, sh, "B1", "Value")
 	f.SetCellStyle(sh, "A1", "B1", st["header"])

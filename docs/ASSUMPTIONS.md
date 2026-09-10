@@ -19,6 +19,6 @@ These policies make the supplied assignment implementable without silently inven
 
 ## Known remaining work
 
-The complete local database replay, guarded SQL child-version replay, report verification, explain path, and custom-format dump restore have been exercised. A full remote Neon row replay is intentionally not part of the recorded acceptance run because the provider's COPY transfer rate is materially slower than the local fixture. Visual rendering of the largest workbook sheet remains an operational QA limitation, and the measured Go RSS is above the architecture's 512 MiB engineering target; neither is represented as a financial correctness pass.
+The complete local database replay, guarded SQL child-version replay, report verification, explain path, custom-format dump restore, and full workbook rendering have been exercised. A full remote Neon row replay is intentionally not part of the recorded acceptance run because the provider's COPY transfer rate is materially slower than the local fixture. The measured Go RSS is above the architecture's 512 MiB engineering target; this remains an operational optimization and is not represented as a financial correctness pass.
 
 No assumption is permission to plug a total or suppress an unresolved row. An unseen business event that requires new accounting policy should produce explainable evidence rather than a fabricated classification.
