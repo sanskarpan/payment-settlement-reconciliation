@@ -1,0 +1,75 @@
+{
+  "files": {
+    "amazon_payment_configs_au_old.csv": {
+      "bytes": 16705,
+      "sha256": "a39343e471cf869f77978d3b62d3cbe715ef2c94ddc8a0545f10037e1bdf86a9"
+    },
+    "amazon_payments_data.csv": {
+      "bytes": 9325701,
+      "sha256": "2c892ef32acf01af74b4650174983162be1500cf76370e19529f706ccf2ca13b"
+    },
+    "amazon_sample_output_report.xlsx": {
+      "bytes": 5246143,
+      "sha256": "dde0faf241ad6e4344b14856ee07e9215defd6e83a4665cc80d08fb574a9ba58"
+    },
+    "amazon_settlement_configs_au.csv": {
+      "bytes": 17070,
+      "sha256": "bdbf9d3bbce49dca61075f1cbb2d8eeacb75f80522830faa1e3569651eee9274"
+    },
+    "amazon_settlements_data.txt": {
+      "bytes": 10738344,
+      "sha256": "57449b335cbf80fb5199dd1a90af3ab82a4fd5920c3e24cfdcbcb70bac5d2aa1"
+    }
+  },
+  "payment_rows": 23026,
+  "settlement_rows_including_metadata": 54980,
+  "config_rows": {
+    "payment": 149,
+    "settlement": 137
+  },
+  "payment_scope": [
+    {
+      "settlement_id": "12370691583",
+      "status": "Released",
+      "count": 14,
+      "total": "-83.55"
+    },
+    {
+      "settlement_id": "12382593803",
+      "status": "Deferred",
+      "count": 7,
+      "total": "101.07"
+    },
+    {
+      "settlement_id": "12382593803",
+      "status": "Released",
+      "count": 5642,
+      "total": "655.70"
+    },
+    {
+      "settlement_id": "12395580393",
+      "status": "Deferred",
+      "count": 2398,
+      "total": "43540.07"
+    },
+    {
+      "settlement_id": "12395580393",
+      "status": "Released",
+      "count": 13472,
+      "total": "78362.44"
+    },
+    {
+      "settlement_id": "12407469483",
+      "status": "Deferred",
+      "count": 123,
+      "total": "2171.94"
+    },
+    {
+      "settlement_id": "12407469483",
+      "status": "Released",
+      "count": 1370,
+      "total": "25461.48"
+    }
+  ],
+  "settlement_component_total": "212118.95"
+}

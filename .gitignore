@@ -1,0 +1,8 @@
+/bin/
+/output/
+/workingData/
+/.env
+*.dump
+*.sql.gz
+*.log
+tools/__pycache__/
