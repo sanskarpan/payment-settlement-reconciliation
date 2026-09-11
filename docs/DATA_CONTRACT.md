@@ -20,7 +20,7 @@ Use encoding/csv for CSV and TSV (`Comma='\t'`). Do not split strings by delimit
 
 Capture record ordinal, physical starting line, ending line, byte offsets, original file hash and ordered raw values. `Reader.FieldPos(0)` provides the field's physical start; `InputOffset` helps locate byte boundaries. Document blank physical lines skipped by the standard CSV reader; distinguish physical line from record ordinal. Do not claim JSONB preserves original quoting or byte order: retain the immutable source file and byte span for that purpose.
 
-Row errors abort an accepted ingestion run. A diagnostic error manifest may be written, but no partial data may appear in final reconciliation. EOF is not an error. Apply file/record size limits before unbounded allocation: default 100 MiB per input and 1 MiB per logical CSV record, configurable. A bounded record reader or counting wrapper must account for quotes/multiline records; do not substitute Scanner's default token limit.
+Row errors abort an accepted ingestion run. A diagnostic error manifest may be written, but no partial data may appear in final reconciliation. EOF is not an error. The implementation rejects files above 100 MiB before decoding and rejects a logical CSV record above 1 MiB immediately after `encoding/csv` returns it. The file cap is the hard preallocation bound; the record check is a stricter validation bound, not a claim that `encoding/csv` itself allocates incrementally. A future streaming decoder must account for quotes and multiline records.
 
 ## Payment canonical fields
 
@@ -56,7 +56,7 @@ The old configs mention `marketplace_withheld_tax`, absent from this payment hea
 
 Header names replace hyphens with underscores for field lookup, not identifier contents. `order-id` provides txn_ref when present, otherwise `adjustment-id`. Retain both and the choice used. Do not use shipment-id or merchant-order-id as hidden fallbacks; templates name these explicitly. `amount-type` and `amount-description` are selectors. `amount` is the sole component amount.
 
-The metadata row has settlement ID, start/end/deposit dates, total-amount and currency, but no transaction-type or amount. Ingest it with `row_kind=settlement_metadata`; never turn its total-amount into a transaction contribution. Extract a settlement control referencing that source row. Amount rows inherit currency and period metadata only from their own settlement ID. Missing/contradictory metadata is an error. Do not forward-fill transaction fields.
+The metadata row has settlement ID, start/end/deposit dates, total-amount and currency, but no transaction-type or transaction amount. Ingest it with `row_kind=settlement_metadata`; store the parsed header control in `source_rows.recon_amount` with `event_class=CONTROL`, but never turn it into a mapping or summary contribution. Extract a settlement control referencing that source row. Amount rows inherit currency only from metadata with their own settlement ID. Missing or contradictory metadata is an error. Do not forward-fill transaction fields.
 
 ## Exact AUD amounts
 

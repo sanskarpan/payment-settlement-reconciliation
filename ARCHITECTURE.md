@@ -26,7 +26,7 @@ The mapping engine is pure Go. Database adapters persist immutable results. Reco
 
 | Package | Responsibility | Must not do |
 | --- | --- | --- |
-| `cmd/recon` | Parse flags, signal cancellation, exit status | Calculate finance totals |
+| `cmd/recon` | Parse flags, orchestrate commands, exit status | Calculate finance totals |
 | `internal/money` | Parse AUD decimals, checked cents arithmetic, formatting | Guess locale or round input |
 | `internal/ingest` | CSV/TSV parsers, header detection, source locations | Clean files externally |
 | `internal/normalize` | Versioned label aliases, dates, canonical fields | Choose summary buckets |
@@ -35,7 +35,6 @@ The mapping engine is pure Go. Database adapters persist immutable results. Reco
 | `internal/store` | pgx transactions, COPY, queries, migrations | Infer mapping defects |
 | `internal/reconcile` | Group/read models and coverage checks | Pair raw row cross-products |
 | `internal/report` | Workbook rendering and artifact checks | Reclassify amounts |
-| `internal/app` | Orchestrate complete runs and replay | Hide failed validations |
 | `migrations` | Versioned DDL and seed definitions | Load corrected configs as originals |
 | `testdata` | Small synthetic fixtures and frozen expected results | Leak raw customer data in CI |
 
@@ -48,13 +47,13 @@ Use interfaces only at actual boundaries (reader, run store, report writer). Pas
 3. Create a run identity from ordered source hashes, config content hash, normalization version, layout version, selected settlement/currency and engine version. Claim it with a unique database constraint.
 4. Parse all input rows and metadata, map each row, and insert both sources in the shared table. Retain per-rule decisions and nonzero contributions. Accumulate summary totals by source and scope during this pass.
 5. In the same data transaction verify row counts, amount parsing, key consistency, mapping coverage, and summary conservation as applicable to baseline/fixed mode; finish ingestion atomically.
-6. Build grouped keys and full-outer-join read models inside a transaction. Persist group membership to make report audit navigation stable.
+6. Build source aggregates and their full outer union in Go before persistence. Persist every group membership in the data transaction to make report audit navigation stable; independent SQL later recomputes the per-key controls.
 7. Read the immutable completed run, write a temporary XLSX in the destination directory, close and verify it, then atomically rename. Register its checksum in the database after rename.
 8. On fixed runs perform exact summary and per-key acceptance controls. Publish a failed verification status and diagnostics if any check fails; never label the report final merely because writing succeeded.
 
 ## Transactions and crash behavior
 
-Use a small run-claim transaction first. Use one ingestion data transaction for the supplied roughly 20 MB of text input. Bounded COPY batches and PostgreSQL-backed aggregation avoid retaining all rows in memory. Failure rolls back all run data and records the failure in a separate status transaction. Do not leave a partial run eligible for reconciliation/reporting.
+Use a small run-claim transaction first. Use one data transaction for the supplied roughly 20 MB of text input. PostgreSQL COPY handles the retained source-row and mapping sets, and the input file/row limits bound this assignment-scale implementation. Failure rolls back all run data and records the failure in a separate status transaction. Do not leave a partial run eligible for reconciliation/reporting.
 
 A unique run fingerprint prevents duplicate ingestion. Claim with `INSERT ... ON CONFLICT`; a concurrent caller observes the existing run and either returns its completed identity or reports `RUN_IN_PROGRESS`. It must not start another importer. Do not silently reclaim a crashed run: `retry --run` takes a database row lock, requires a terminal failure or explicitly recorded interruption, increments attempt, and clears only uncommitted/failed derived data for that run. Completed runs remain immutable.
 
@@ -62,4 +61,4 @@ File-system writes cannot share a PostgreSQL transaction. Report retry is safe b
 
 ## Performance budget
 
-Engineering target, not a measured claim: reference dataset completes in under two minutes on a documented 4-core/8-GB development machine; Go process peak RSS under 512 MB. Profile each stage, report actual hardware and numbers. Stream parsers and large worksheets; group through SQL with indexes. Do not parallelize accounting mutation until profiling justifies it. Optimize with evidence without changing ordering, lineage, or transaction semantics.
+Engineering target, not a measured claim: reference dataset completes in under two minutes on a documented 4-core/8-GB development machine; Go process peak RSS under 512 MB. Profile each stage and report actual hardware and numbers. Large workbook sheets use streaming, while source and lineage rows remain in memory; the measured reference run is about 1.2 GiB and therefore misses the memory target. Optimize with evidence without changing ordering, lineage, or transaction semantics.

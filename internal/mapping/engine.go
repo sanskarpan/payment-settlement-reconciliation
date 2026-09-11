@@ -24,6 +24,25 @@ type Engine struct {
 }
 
 func (e Engine) Map(rows []domain.RawRow) ([]domain.MappedRow, domain.Summary, []string, error) {
+	if e.Mode != Diagnostic && e.Mode != Strict {
+		return nil, domain.Summary{}, nil, fmt.Errorf("unsupported mapping mode %q", e.Mode)
+	}
+	for _, rule := range e.Rules {
+		if rule.Source != domain.SourcePayment && rule.Source != domain.SourceSettlement {
+			return nil, domain.Summary{}, nil, fmt.Errorf("rule line %d has unsupported source %q", rule.OriginLine, rule.Source)
+		}
+		if rule.Source == domain.SourcePayment && strings.TrimSpace(rule.AmountField) == "" {
+			return nil, domain.Summary{}, nil, fmt.Errorf("payment rule line %d has no amount field", rule.OriginLine)
+		}
+		if rule.Source == domain.SourceSettlement && strings.TrimSpace(rule.AmountType) == "" {
+			return nil, domain.Summary{}, nil, fmt.Errorf("settlement rule line %d has no amount type", rule.OriginLine)
+		}
+		for _, target := range []string{rule.PositiveTarget, rule.NegativeTarget} {
+			if target != "" && !KnownSummaryField(target) {
+				return nil, domain.Summary{}, nil, fmt.Errorf("rule line %d has unknown summary field %q", rule.OriginLine, target)
+			}
+		}
+	}
 	if e.index == nil {
 		e.index = make(map[string][]domain.ConfigRule)
 		for _, rule := range e.Rules {
@@ -179,10 +198,15 @@ func (e Engine) mapRow(row domain.RawRow) (domain.MappedRow, error) {
 				target = r.NegativeTarget
 			}
 			decision := "ROUTED"
-			if amount == 0 {
+			if field == "marketplace_withheld_tax" && row.Canonical[field] == "" {
+				if r.PositiveTarget != "" || r.NegativeTarget != "" {
+					return m, fmt.Errorf("optional absent field %q cannot route to a summary target", field)
+				}
+				decision = "OPTIONAL_ABSENT"
+			} else if amount == 0 {
 				decision = "ZERO"
 			}
-			if target == "" {
+			if target == "" && decision != "OPTIONAL_ABSENT" {
 				decision = "NOT_SUMMARIZED"
 			}
 			m.Contributions = append(m.Contributions, domain.Contribution{RowOrdinal: row.Ordinal, Rule: r, Field: field, Amount: amount, Target: target, Decision: decision, KeyParts: parts, Key: key})
@@ -192,6 +216,22 @@ func (e Engine) mapRow(row domain.RawRow) (domain.MappedRow, error) {
 			} else if key != "" && m.Key != key {
 				return m, fmt.Errorf("row line %d expands to conflicting keys %q and %q", row.LineStart, m.Key, key)
 			}
+		}
+	}
+	if row.Source == domain.SourcePayment {
+		totalRouted, componentRouted := false, false
+		for _, c := range m.Contributions {
+			if c.Target == "" || c.Amount == 0 {
+				continue
+			}
+			if c.Field == "total" {
+				totalRouted = true
+			} else {
+				componentRouted = true
+			}
+		}
+		if totalRouted && componentRouted {
+			return m, fmt.Errorf("payment line %d routes both total and component amounts", row.LineStart)
 		}
 	}
 	if m.Key == "" {
@@ -214,14 +254,20 @@ func descriptionMatch(row domain.RawRow, selector string) bool {
 
 func amountFor(row domain.RawRow, field string) (int64, error) {
 	if row.Source == domain.SourceSettlement {
+		if !row.HasRecon {
+			return 0, fmt.Errorf("settlement line %d has no reconciliation amount", row.LineStart)
+		}
 		return row.ReconAmount, nil
 	}
 	v := row.Canonical[field]
 	if field == "fba_fees" {
 		v = row.Canonical["fulfilment_by_amazon_fees"]
 	}
-	if v == "" && field != "other" {
-		return 0, nil
+	if v == "" {
+		if field == "marketplace_withheld_tax" {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("payment line %d is missing mapped amount field %q", row.LineStart, field)
 	}
 	return money.ParseCents(v)
 }
@@ -234,16 +280,39 @@ func expand(template string, row domain.RawRow) ([]string, error) {
 	tokens := strings.Split(template, "+")
 	out := make([]string, len(tokens))
 	for i, t := range tokens {
+		t = strings.TrimSpace(t)
 		if v, ok := fields[t]; ok {
 			if v == "" {
 				return nil, fmt.Errorf("record_ref token %s empty at source line %d", t, row.LineStart)
 			}
 			out[i] = v
+		} else if t == "record_type" {
+			out[i] = normalize.Label(row.Transaction)
+			if out[i] == "" {
+				return nil, fmt.Errorf("record_ref token %s empty at source line %d", t, row.LineStart)
+			}
+		} else if t == "" || isFieldToken(t) {
+			return nil, fmt.Errorf("unknown record_ref token %q at source line %d", t, row.LineStart)
 		} else {
 			out[i] = t
 		}
+		if strings.Contains(out[i], "\x1f") {
+			return nil, fmt.Errorf("record_ref value contains reserved delimiter at source line %d", row.LineStart)
+		}
 	}
 	return out, nil
+}
+
+func isFieldToken(s string) bool {
+	if s == "" || strings.ToLower(s) != s {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func ruleLines(r []domain.ConfigRule) []int {

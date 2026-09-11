@@ -87,18 +87,20 @@ func VerifyRun(ctx context.Context, p *pgxpool.Pool, runID int64, expectedRows i
 		return out, err
 	}
 	if err := p.QueryRow(ctx, `SELECT count(*) FROM (
-		SELECT st.source,st.field,st.amount,COALESCE(sc.amount,0) AS recomputed
-		FROM summary_totals st
-		LEFT JOIN (SELECT run_id,source,summary_field,SUM(amount) AS amount FROM summary_contributions WHERE run_id=$1 GROUP BY run_id,source,summary_field) sc
+		SELECT COALESCE(st.source,sc.source),COALESCE(st.field,sc.summary_field)
+		FROM (SELECT * FROM summary_totals WHERE run_id=$1) st
+		FULL OUTER JOIN (SELECT run_id,source,summary_field,SUM(amount) AS amount FROM summary_contributions WHERE run_id=$1 GROUP BY run_id,source,summary_field) sc
 		  ON sc.run_id=st.run_id AND sc.source=st.source AND sc.summary_field=st.field
-		WHERE st.run_id=$1 AND st.amount<>COALESCE(sc.amount,0)
+		WHERE COALESCE(st.amount,0)<>COALESCE(sc.amount,0)
 	) mismatches`, runID).Scan(&out.SummaryMismatches); err != nil {
 		return out, err
 	}
-	if err := p.QueryRow(ctx, `SELECT count(*) FROM settlement_controls c
+	if err := p.QueryRow(ctx, `WITH checks AS (SELECT c.run_id,c.settlement_id,c.header_total,a.activity
+		FROM settlement_controls c JOIN runs r ON r.id=c.run_id
 		LEFT JOIN (SELECT run_id,settlement_id,SUM(recon_amount) AS activity FROM source_rows WHERE run_id=$1 AND source='settlement' AND row_kind='transaction' AND scope_reason='IN_SCOPE' GROUP BY run_id,settlement_id) a
 		ON a.run_id=c.run_id AND a.settlement_id=c.settlement_id
-		WHERE c.run_id=$1 AND c.header_total<>COALESCE(a.activity,0)`, runID).Scan(&out.HeaderMismatches); err != nil {
+		WHERE c.run_id=$1 AND c.settlement_id=r.selected_settlement_id)
+		SELECT count(*) FILTER (WHERE header_total<>COALESCE(activity,0)) + CASE WHEN count(*)=1 THEN 0 ELSE 1 END FROM checks`, runID).Scan(&out.HeaderMismatches); err != nil {
 		return out, err
 	}
 	if expectedRows > 0 && out.SourceRows != expectedRows {
@@ -109,6 +111,9 @@ func VerifyRun(ctx context.Context, p *pgxpool.Pool, runID int64, expectedRows i
 	}
 	if out.Mode == "strict" && out.Status != "PASS" {
 		return out, fmt.Errorf("strict run %d verification_status=%s, want PASS", runID, out.Status)
+	}
+	if out.Mode == "strict" && out.IssueRows != 0 {
+		return out, fmt.Errorf("strict run %d has %d persisted issues", runID, out.IssueRows)
 	}
 	if out.AmountMismatches != 0 || out.SummaryMismatches != 0 {
 		return out, fmt.Errorf("run %d has amount mismatches=%d summary mismatches=%d", runID, out.AmountMismatches, out.SummaryMismatches)

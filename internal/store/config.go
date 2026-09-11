@@ -104,7 +104,7 @@ func EnsureFrozenConfig(ctx context.Context, p *pgxpool.Pool, name, note string,
 		file FileInfo
 	}{{"payment_config", paymentFile}, {"settlement_config", settlementFile}} {
 		var id int64
-		if err = tx.QueryRow(ctx, `INSERT INTO source_files(source_kind,path,sha256,byte_size) VALUES($1,$2,$3,$4) ON CONFLICT(source_kind,sha256) DO UPDATE SET path=EXCLUDED.path RETURNING id`, item.kind, item.file.Path, item.file.SHA256, item.file.Bytes).Scan(&id); err != nil {
+		if err = tx.QueryRow(ctx, `WITH inserted AS (INSERT INTO source_files(source_kind,path,sha256,byte_size) VALUES($1,$2,$3,$4) ON CONFLICT(source_kind,sha256) DO NOTHING RETURNING id) SELECT id FROM inserted UNION ALL SELECT id FROM source_files WHERE source_kind=$1 AND sha256=$3 LIMIT 1`, item.kind, item.file.Path, item.file.SHA256, item.file.Bytes).Scan(&id); err != nil {
 			return FrozenConfig{}, err
 		}
 		fileIDs[item.kind] = id
@@ -129,6 +129,9 @@ func EnsureFrozenConfig(ctx context.Context, p *pgxpool.Pool, name, note string,
 	if _, err = tx.Exec(ctx, `UPDATE config_versions SET state='FROZEN',frozen_at=now(),content_sha256=$2 WHERE id=$1`, existing.ID, contentHash); err != nil {
 		return FrozenConfig{}, err
 	}
+	if err = tx.QueryRow(ctx, `SELECT content_sha256 FROM config_versions WHERE id=$1`, existing.ID).Scan(&existing.ContentSHA256); err != nil {
+		return FrozenConfig{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return FrozenConfig{}, err
 	}
@@ -147,9 +150,12 @@ func configHash(payment, settlement FileInfo, rules []domain.ConfigRule) string 
 		return ordered[i].OriginLine < ordered[j].OriginLine
 	})
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|", payment.SHA256, settlement.SHA256)
+	writeHashPart(h, payment.SHA256)
+	writeHashPart(h, settlement.SHA256)
 	for _, r := range ordered {
-		fmt.Fprintf(h, "%s|%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|", r.Source, r.OriginFile, r.OriginLine, r.TransactionType, r.Description, r.AmountField, r.AmountType, r.AmountDescription, r.RecordRef, r.PositiveTarget, r.NegativeTarget)
+		for _, value := range []string{string(r.Source), r.OriginFile, fmt.Sprint(r.OriginLine), r.TransactionType, r.Description, r.AmountField, r.AmountType, r.AmountDescription, r.RecordRef, r.PositiveTarget, r.NegativeTarget} {
+			writeHashPart(h, value)
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

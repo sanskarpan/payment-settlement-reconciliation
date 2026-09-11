@@ -77,3 +77,14 @@ Only check items supported by actual code/artifacts and verification. The checke
 - [x] Complete PROGRESS.md with actual investigation, rejected hypotheses and final evidence.
 - [x] Verify docs/SUBMISSION.md inventory and original hashes.
 - [x] Final review: no amount plugs, cross-source copying, suppressed rows, hidden ambiguity or unsupported claims.
+
+## Phase 8 — adversarial audit hardening
+
+- [x] Audit exact-money boundaries and every aggregation/subtraction path; reject empty and overflowing amounts.
+- [x] Audit parser schemas, statuses, dates, metadata ownership, UTF-8, byte lineage and bounded inputs.
+- [x] Audit config/rule/template validation and make guarded patch publication atomic.
+- [x] Audit strict per-key bucket controls, report cells and independent SQL recomputation.
+- [x] Enforce cross-run/config/source lineage, finite exact SQL money, frozen-version immutability and migration checksums.
+- [x] Separate RECONCILED data state from atomic report registration; strengthen dump/restore comparisons.
+- [x] Upgrade vulnerable dependencies; pass unit, randomized, race, vet, Staticcheck, Shellcheck and reachable-vulnerability scans.
+- [x] Gate: fresh baseline/fixed PostgreSQL replay and fixed workbook pass with all 78,006 rows retained and zero fixed discrepancies.

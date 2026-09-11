@@ -39,7 +39,19 @@ func TestReferenceParsers(t *testing.T) {
 	if len(s) != 54980 || s[0].Kind != "settlement_metadata" {
 		t.Fatalf("settlement rows=%d first kind=%s", len(s), s[0].Kind)
 	}
+	if !s[0].HasRecon || s[0].ReconAmount != 21211895 {
+		t.Fatalf("metadata control=%d has=%v", s[0].ReconAmount, s[0].HasRecon)
+	}
+	if p[0].ByteStart < 3 || p[0].ByteEnd <= p[0].ByteStart {
+		t.Fatalf("invalid BOM-aware payment byte range %d:%d", p[0].ByteStart, p[0].ByteEnd)
+	}
 	if s[1].Currency != "AUD" {
 		t.Fatalf("inherited settlement currency=%q", s[1].Currency)
+	}
+}
+
+func TestSettlementTimezoneMustBeUTC(t *testing.T) {
+	if _, err := parseSettlementDate("01.07.2026 12:30:00 AEST"); err == nil {
+		t.Fatal("non-UTC zone accepted")
 	}
 }

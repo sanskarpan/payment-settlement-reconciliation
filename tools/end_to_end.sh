@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_dir"
 if [[ -z "${DATABASE_URL:-}" && -f .env ]]; then
   set -a
@@ -38,6 +38,12 @@ fixed_id=$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select id from config_
 if [[ -z "$fixed_id" ]]; then
   fixed_id=$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select clone_config_version(${baseline_id},'amazon-au-fixed-f01-f03','F01/F02/F03 guarded replay')")
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select apply_mapping_fixes(${fixed_id})" >/dev/null
+fi
+
+hash_mismatches=$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select count(*) from config_versions where state='FROZEN' and content_sha256<>compute_config_sha256(id)")
+if [[ "$hash_mismatches" != "0" ]]; then
+  echo "found ${hash_mismatches} frozen configuration hash mismatches" >&2
+  exit 1
 fi
 
 ./bin/recon run \

@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -44,21 +44,36 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 		return fmt.Errorf("no migration files found")
 	}
 	sort.Strings(files)
-	if _, err = p.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+	if _, err = p.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, sha256 TEXT, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+		return err
+	}
+	if _, err = p.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS sha256 TEXT`); err != nil {
 		return err
 	}
 	for _, path := range files {
 		version := filepath.Base(path)
-		var applied bool
-		if err = p.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&applied); err != nil {
-			return err
-		}
-		if applied {
-			continue
-		}
 		b, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
+		}
+		sum := sha256.Sum256(b)
+		digest := hex.EncodeToString(sum[:])
+		var recorded *string
+		err = p.QueryRow(ctx, `SELECT sha256 FROM schema_migrations WHERE version=$1`, version).Scan(&recorded)
+		if err == nil {
+			if recorded == nil {
+				if _, err = p.Exec(ctx, `UPDATE schema_migrations SET sha256=$2 WHERE version=$1 AND sha256 IS NULL`, version, digest); err != nil {
+					return err
+				}
+				continue
+			}
+			if *recorded != digest {
+				return fmt.Errorf("migration %s checksum changed: database=%s file=%s", version, *recorded, digest)
+			}
+			continue
+		}
+		if err != pgx.ErrNoRows {
+			return err
 		}
 		tx, beginErr := p.Begin(ctx)
 		if beginErr != nil {
@@ -68,7 +83,7 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("apply %s: %w", version, execErr)
 		}
-		if _, execErr := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1)`, version); execErr != nil {
+		if _, execErr := tx.Exec(ctx, `INSERT INTO schema_migrations(version,sha256) VALUES($1,$2)`, version, digest); execErr != nil {
 			_ = tx.Rollback(ctx)
 			return fmt.Errorf("record %s: %w", version, execErr)
 		}
@@ -90,8 +105,23 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 			}
 		}
 		for _, group := range groups {
+			if group.Scope != domain.ScopeIn {
+				continue
+			}
 			if len(group.PaymentRows) > 0 && len(group.SettlementRows) > 0 && group.PaymentAmount != group.SettlementAmt {
 				return 0, fmt.Errorf("strict run amount mismatch for record_ref %q", group.Key)
+			}
+			fields := map[string]struct{}{}
+			for f := range group.PaymentBuckets {
+				fields[f] = struct{}{}
+			}
+			for f := range group.SettleBuckets {
+				fields[f] = struct{}{}
+			}
+			for f := range fields {
+				if group.PaymentBuckets[f] != group.SettleBuckets[f] {
+					return 0, fmt.Errorf("strict run bucket mismatch for record_ref %q field %q", group.Key, f)
+				}
 			}
 		}
 	}
@@ -120,7 +150,7 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 		i FileInfo
 	}{{domain.SourcePayment, pi}, {domain.SourceSettlement, si}} {
 		var id int64
-		err = tx.QueryRow(ctx, `INSERT INTO source_files(source_kind,path,sha256,byte_size) VALUES($1,$2,$3,$4) ON CONFLICT(source_kind,sha256) DO UPDATE SET path=EXCLUDED.path RETURNING id`, x.s, x.i.Path, x.i.SHA256, x.i.Bytes).Scan(&id)
+		err = tx.QueryRow(ctx, `WITH inserted AS (INSERT INTO source_files(source_kind,path,sha256,byte_size) VALUES($1,$2,$3,$4) ON CONFLICT(source_kind,sha256) DO NOTHING RETURNING id) SELECT id FROM inserted UNION ALL SELECT id FROM source_files WHERE source_kind=$1 AND sha256=$3 LIMIT 1`, x.s, x.i.Path, x.i.SHA256, x.i.Bytes).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -151,9 +181,9 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 	all := append(append([]domain.MappedRow{}, payments...), settlements...)
 	if _, err = tx.Exec(ctx, `CREATE TEMP TABLE source_rows_stage (
 		run_id BIGINT, source_file_id BIGINT, source TEXT, row_kind TEXT, ordinal INTEGER,
-		line_start INTEGER, line_end INTEGER, settlement_id TEXT, currency TEXT,
+		line_start INTEGER, line_end INTEGER, byte_start BIGINT, byte_end BIGINT, settlement_id TEXT, currency TEXT,
 		transaction_type TEXT, description TEXT, amount_type TEXT, amount_description TEXT,
-		sku TEXT, txn_ref TEXT, key_date DATE, status TEXT, recon_amount NUMERIC,
+		sku TEXT, txn_ref TEXT, posted_at TIMESTAMPTZ, release_at TIMESTAMPTZ, key_date DATE, status TEXT, recon_amount NUMERIC, event_class TEXT,
 		scope_reason TEXT, raw_payload JSONB, canonical_payload JSONB
 	) ON COMMIT DROP`); err != nil {
 		return 0, err
@@ -177,13 +207,13 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 		if r.HasRecon {
 			recon = money.FormatCents(r.ReconAmount)
 		}
-		stageRows = append(stageRows, []any{runID, fileIDs[r.Source], r.Source, r.Kind, r.Ordinal, r.LineStart, r.LineEnd, nullable(r.SettlementID), nullable(r.Currency), nullable(r.Transaction), nullable(r.Description), nullable(r.AmountType), nullable(r.AmountDesc), nullable(r.SKU), nullable(r.TxnRef), keyDate, nullable(r.Status), recon, r.Scope, raw, canonical})
+		stageRows = append(stageRows, []any{runID, fileIDs[r.Source], r.Source, r.Kind, r.Ordinal, r.LineStart, r.LineEnd, r.ByteStart, r.ByteEnd, nullable(r.SettlementID), nullable(r.Currency), nullable(r.Transaction), nullable(r.Description), nullable(r.AmountType), nullable(r.AmountDesc), nullable(r.SKU), nullable(r.TxnRef), r.PostedAt, r.ReleaseAt, keyDate, nullable(r.Status), recon, nullable(r.EventClass), r.Scope, raw, canonical})
 	}
-	if _, err = tx.CopyFrom(ctx, pgx.Identifier{"source_rows_stage"}, []string{"run_id", "source_file_id", "source", "row_kind", "ordinal", "line_start", "line_end", "settlement_id", "currency", "transaction_type", "description", "amount_type", "amount_description", "sku", "txn_ref", "key_date", "status", "recon_amount", "scope_reason", "raw_payload", "canonical_payload"}, pgx.CopyFromRows(stageRows)); err != nil {
+	if _, err = tx.CopyFrom(ctx, pgx.Identifier{"source_rows_stage"}, []string{"run_id", "source_file_id", "source", "row_kind", "ordinal", "line_start", "line_end", "byte_start", "byte_end", "settlement_id", "currency", "transaction_type", "description", "amount_type", "amount_description", "sku", "txn_ref", "posted_at", "release_at", "key_date", "status", "recon_amount", "event_class", "scope_reason", "raw_payload", "canonical_payload"}, pgx.CopyFromRows(stageRows)); err != nil {
 		return 0, err
 	}
-	insertedRows, err := tx.Query(ctx, `INSERT INTO source_rows(run_id,source_file_id,source,row_kind,ordinal,line_start,line_end,settlement_id,currency,transaction_type,description,amount_type,amount_description,sku,txn_ref,key_date,status,recon_amount,scope_reason,raw_payload,canonical_payload)
-		SELECT run_id,source_file_id,source,row_kind,ordinal,line_start,line_end,settlement_id,currency,transaction_type,description,amount_type,amount_description,sku,txn_ref,key_date,status,recon_amount,scope_reason,raw_payload,canonical_payload
+	insertedRows, err := tx.Query(ctx, `INSERT INTO source_rows(run_id,source_file_id,source,row_kind,ordinal,line_start,line_end,byte_start,byte_end,settlement_id,currency,transaction_type,description,amount_type,amount_description,sku,txn_ref,posted_at,release_at,key_date,status,recon_amount,event_class,scope_reason,raw_payload,canonical_payload)
+		SELECT run_id,source_file_id,source,row_kind,ordinal,line_start,line_end,byte_start,byte_end,settlement_id,currency,transaction_type,description,amount_type,amount_description,sku,txn_ref,posted_at,release_at,key_date,status,recon_amount,event_class,scope_reason,raw_payload,canonical_payload
 		FROM source_rows_stage ORDER BY source, ordinal RETURNING id, source, ordinal`)
 	if err != nil {
 		return 0, err
@@ -227,24 +257,21 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 		return 0, err
 	}
 	for _, m := range all {
-		if m.Row.Source != domain.SourceSettlement || m.Row.Kind != domain.RowMetadata || m.Row.SettlementID == "" {
+		if m.Row.Source != domain.SourceSettlement || m.Row.Kind != domain.RowMetadata || m.Row.SettlementID != selected {
 			continue
 		}
-		header, parseErr := money.ParseCents(m.Row.Raw["total-amount"])
-		if parseErr != nil {
-			return 0, fmt.Errorf("settlement metadata line %d total-amount: %w", m.Row.LineStart, parseErr)
+		if !m.Row.HasRecon {
+			return 0, fmt.Errorf("settlement metadata line %d has no parsed header total", m.Row.LineStart)
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO settlement_controls(run_id,settlement_id,metadata_row_id,currency,header_total) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, runID, m.Row.SettlementID, rowIDs[rowKey(m.Row)], m.Row.Currency, money.FormatCents(header)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO settlement_controls(run_id,settlement_id,metadata_row_id,currency,header_total) VALUES($1,$2,$3,$4,$5)`, runID, m.Row.SettlementID, rowIDs[rowKey(m.Row)], m.Row.Currency, money.FormatCents(m.Row.ReconAmount)); err != nil {
 			return 0, err
 		}
 	}
 	for field, bySource := range summary.Buckets {
-		for source, amount := range bySource {
-			if amount == 0 {
-				continue
-			}
+		for _, source := range []domain.Source{domain.SourcePayment, domain.SourceSettlement} {
+			amount := bySource[source]
 			var count int64
-			err = tx.QueryRow(ctx, `SELECT count(*) FROM row_mappings rm JOIN source_rows sr ON sr.id=rm.source_row_id WHERE rm.run_id=$1 AND sr.source=$2 AND rm.target=$3 AND rm.amount<>0`, runID, source, field).Scan(&count)
+			err = tx.QueryRow(ctx, `SELECT count(*) FROM row_mappings rm JOIN source_rows sr ON sr.id=rm.source_row_id WHERE rm.run_id=$1 AND sr.source=$2 AND sr.scope_reason='IN_SCOPE' AND rm.target=$3 AND rm.amount<>0`, runID, source, field).Scan(&count)
 			if err != nil {
 				return 0, err
 			}
@@ -294,12 +321,7 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 			return 0, err
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE runs SET stage='REPORTED',verification_status=$2,completed_at=$3 WHERE id=$1`, runID, func() string {
-		if mode == "strict" {
-			return "PASS"
-		}
-		return "DIAGNOSTIC"
-	}(), time.Now().UTC()); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE runs SET stage='RECONCILED',verification_status='NOT_CHECKED',completed_at=NULL WHERE id=$1`, runID); err != nil {
 		return 0, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -310,13 +332,23 @@ func Persist(ctx context.Context, p *pgxpool.Pool, name, selected, mode string, 
 
 func runFingerprint(pi, si FileInfo, selected, mode string, configVersionID int64, rules []domain.ConfigRule) string {
 	h := sha256.New()
-	h.Write([]byte(pi.SHA256))
-	h.Write([]byte(si.SHA256))
-	h.Write([]byte(selected))
-	h.Write([]byte(mode))
-	h.Write([]byte(fmt.Sprintf("|config-version:%d|engine-version:reconciliation-v2", configVersionID)))
-	for _, r := range rules {
-		h.Write([]byte(fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%s|%s", r.Source, r.OriginFile, r.OriginLine, r.TransactionType, r.Description+r.AmountType+r.AmountDescription, r.AmountField, r.RecordRef, r.PositiveTarget, r.NegativeTarget)))
+	ordered := append([]domain.ConfigRule(nil), rules...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Source != ordered[j].Source {
+			return ordered[i].Source < ordered[j].Source
+		}
+		if ordered[i].OriginFile != ordered[j].OriginFile {
+			return ordered[i].OriginFile < ordered[j].OriginFile
+		}
+		return ordered[i].OriginLine < ordered[j].OriginLine
+	})
+	for _, value := range []string{pi.SHA256, si.SHA256, selected, mode, fmt.Sprint(configVersionID), "normalization-v1", "layout-v1", "reconciliation-v2"} {
+		writeHashPart(h, value)
+	}
+	for _, r := range ordered {
+		for _, value := range []string{string(r.Source), r.OriginFile, fmt.Sprint(r.OriginLine), r.TransactionType, r.Description, r.AmountType, r.AmountDescription, r.AmountField, r.RecordRef, r.PositiveTarget, r.NegativeTarget} {
+			writeHashPart(h, value)
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -343,7 +375,7 @@ func claimRun(ctx context.Context, p *pgxpool.Pool, name, fingerprint, selected,
 	if err = tx.QueryRow(ctx, `SELECT id,stage,verification_status,attempt FROM runs WHERE fingerprint=$1 FOR UPDATE`, fingerprint).Scan(&runID, &stage, &status, &attempt); err != nil {
 		return 0, false, err
 	}
-	if stage == "REPORTED" {
+	if stage == "REPORTED" || stage == "RECONCILED" {
 		if err = tx.Commit(ctx); err != nil {
 			return 0, false, err
 		}
@@ -373,6 +405,10 @@ func ruleKey(r domain.ConfigRule) string {
 	return fmt.Sprintf("%s|%s|%d", r.Source, r.OriginFile, r.OriginLine)
 }
 func rowKey(r domain.RawRow) string { return fmt.Sprintf("%s|%d", r.Source, r.Ordinal) }
+func writeHashPart(h hash.Hash, value string) {
+	fmt.Fprintf(h, "%d:", len(value))
+	_, _ = h.Write([]byte(value))
+}
 func nullable(s string) any {
 	if strings.TrimSpace(s) == "" {
 		return nil

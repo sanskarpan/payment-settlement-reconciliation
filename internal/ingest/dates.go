@@ -36,7 +36,7 @@ func parseSettlementDate(s string) (*time.Time, error) {
 	if s == "" {
 		return nil, nil
 	}
-	for _, layout := range []string{"02.01.2006 15:04:05 MST", "02.01.2006"} {
+	for _, layout := range []string{"02.01.2006 15:04:05 UTC", "02.01.2006"} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return &t, nil
 		}

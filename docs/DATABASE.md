@@ -6,7 +6,7 @@ This contract is implemented by the versioned SQL migrations under `migrations/`
 
 Use bigint generated identity for internal IDs, text for externally supplied identifiers, timestamptz for instants, date for key days, JSONB for parsed raw payload and structured diagnostic detail. Persist original source files separately with hashes and offsets; JSONB is not byte-exact source storage.
 
-Money: define an unconstrained `numeric` domain with checks for finite values, `scale(VALUE) <= 2`, and `abs(VALUE) <= 92233720368547758.07`. This avoids silent NUMERIC(p,2) input rounding. Go parses into signed cents first and converts to pgtype.Numeric without floating point. SQL SUM remains numeric; check range before converting an aggregate back to int64 cents. Counts use bigint. Business enum values can be text plus CHECK constraints to keep migrations simple.
+Money columns use unconstrained `numeric` plus `valid_exact_cents` checks for finite values, at most two decimal places, and the signed-int64-cent range. This avoids silent `NUMERIC(p,2)` input rounding. Go parses signed cents first and sends formatted decimals without floating point. SQL sums remain numeric. Counts use bigint.
 
 Use database-generated IDs only as locators. Stable identity is content hash + source ordinal, not auto-increment ordering. Every derived table has run_id and prevents cross-run FK references through composite keys.
 
@@ -14,20 +14,20 @@ Use database-generated IDs only as locators. Stable identity is content hash + s
 
 | Table | Required columns and constraints |
 | --- | --- |
-| `source_files` | id PK, kind (payment/settlement/payment_config/settlement_config), original_name, sha256, byte_size, encoding, header_line, headers JSONB, preamble JSONB, immutable_storage_path. UNIQUE(kind,sha256). No path as sole identity. |
+| `source_files` | id PK, source_kind (payment/settlement/payment_config/settlement_config), path, sha256, byte_size. UNIQUE(source_kind,sha256). Conflict reuse never mutates the first recorded path. |
 | `config_versions` | id PK, name unique, parent_id FK nullable, state DRAFT/FROZEN, content_sha256 unique when frozen, created_at, note. Frozen rows cannot change. |
-| `mapping_rules` | id PK, config_version_id FK, source payment/settlement, origin_file_id FK, origin_line, transaction_type, description nullable for settlement, amount_field nullable for settlement, amount_type nullable for payment, amount_description nullable for payment, record_ref, positive_target nullable, negative_target nullable. Preserve original values plus canonical selector fields. UNIQUE(config_version_id,source,origin_file_id,origin_line). Do not impose selector uniqueness here: original defects must be representable. |
-| `normalization_profiles` | id/version PK, canonical policy JSONB, hash unique, frozen flag. Includes scoped description alias entries and date/header policy. Treat policy as data with a fixed supported vocabulary, not executable SQL. |
-| `summary_layouts` | version PK, immutable rows/labels/field mapping JSONB, hash. Must implement DESIGN.md. |
-| `runs` | id PK, name unique, fingerprint unique, config_version_id FK, normalization_version FK, layout_version FK, engine_version, selected_settlement_id, currency, mode DIAGNOSTIC_BASELINE/STRICT, stage, verification_status, attempt, started_at, completed_at, error_code/detail nullable. |
+| `mapping_rules` | id PK, config_version_id FK, source, origin_file, origin_line, raw selector fields, record_ref and positive/negative targets. UNIQUE(config_version_id,source,origin_file,origin_line). Selector uniqueness is intentionally absent so original ambiguity remains representable. Frozen-parent moves are trigger-blocked. |
+| `normalization_versions` | name PK, policy JSONB, content_sha256 unique, frozen flag. |
+| `layout_versions` | name PK, layout JSONB, content_sha256 unique, frozen flag. |
+| `runs` | id PK, name unique, fingerprint unique, config/normalization/layout lineage FKs, engine_version, selected_settlement_id, currency, mode, stage, verification_status, attempt, timestamps and error detail. Fingerprints and config hashes use length-prefixed canonical fields. |
 | `run_files` | run_id FK, source_file_id FK, role, PK(run_id,role); exactly one payment and one settlement for this implementation. Config file origins referenced through rules. |
-| `source_rows` | id PK, run_id FK, source_file_id FK, source payment/settlement, record_ordinal, line_start/end, byte_start/end, row_kind TRANSACTION/SETTLEMENT_METADATA, raw_payload JSONB, canonical_payload JSONB, settlement_id, currency, posted_at, release_at nullable, key_date nullable, txn_ref, sku, transaction_type, description_key, amount_type/description nullable, transaction_status nullable, recon_amount nullable money, scope_reason, event_class. UNIQUE(run_id,source_file_id,record_ordinal), UNIQUE(run_id,id). Both sources live here. Metadata has no recon_amount. |
-| `settlement_controls` | run_id, settlement_id, metadata_row_id FK scoped to run, start_at, end_at, deposit_at, currency, header_total money. PK(run_id,settlement_id). |
-| `row_mappings` | id PK, run_id, source_row_id FK, mapping_rule_id FK, amount_field, amount nullable money, field_availability PRESENT/OPTIONAL_ABSENT, decision ROUTED/NOT_SUMMARIZED/ZERO/COVERED_BY_TOTAL, chosen_target nullable, record_ref_parts JSONB nullable, record_ref_hash nullable. UNIQUE(run_id,source_row_id,mapping_rule_id). Enforce rule belongs to run's config version. |
+| `source_rows` | id PK, run/source-file FKs, source, row_kind, ordinal, line and byte spans, raw/canonical JSONB, settlement/currency/selectors/identifiers, posted/release/key dates, status, exact recon_amount, scope_reason and event_class. UNIQUE(run_id,source_file_id,ordinal), UNIQUE(id,run_id). Both sources and metadata live here. Metadata recon_amount is its header control. |
+| `settlement_controls` | run_id, settlement_id, metadata_row_id FK scoped to run, currency, exact header_total. Only the selected settlement is registered. |
+| `row_mappings` | id PK, run/source-row/rule FKs, amount_field, exact amount, target nullable, decision and encoded record_ref. UNIQUE(run_id,source_row_id,rule_id). A trigger enforces run/config/source lineage. |
 | `summary_contributions` | id PK, run_id, source_row_id FK, row_mapping_id FK, source, scope_reason, settlement_id, currency, summary_field FK registry, amount money NOT NULL and nonzero. UNIQUE(row_mapping_id). Source and scope must agree with parent row; no mixing sources. |
 | `summary_fields` | field text PK, kind DIRECT/INTERMEDIATE/CONTROL, supported_policy nullable. Seed all original config targets; route validation detects unsupported nonzero fields. |
-| `summary_totals` | run_id, source, settlement_id, currency, scope_reason, summary_field, amount money, contribution_count; composite PK over all dimensions. Written from ingestion contributions, never manually patched. |
-| `recon_groups` | id PK, run_id, settlement_id, currency, scope_partition, record_ref_hash, record_ref_parts JSONB, payment_count, settlement_count, payment_amount nullable money, settlement_amount nullable money, difference money, status. UNIQUE(run_id,settlement_id,currency,scope_partition,record_ref_parts). Hash index is an accelerator, full tuple is authoritative. |
+| `summary_totals` | run_id, source, field, exact amount, contribution_count. PK(run_id,source,field). Zero states are retained for every encountered field and both sources. |
+| `recon_groups` | id/run identity, encoded record_ref, settlement_id, currency, scope_reason, row counts, exact source amounts and presence status. UNIQUE(run_id,record_ref,settlement_id,currency,scope_reason). |
 | `recon_members` | run_id, group_id FK, source_row_id FK, PK(run_id,source_row_id); each transaction belongs to exactly one group. Non-eligible payment rows form payment-only groups in their own scope partitions. |
 | `run_issues` | id PK, run_id, severity, code, source_row_id nullable, mapping_rule_id nullable, detail JSONB. Bounded display, full persisted evidence. |
 | `config_fix_history` | config_version_id, defect_id, applied_at, old/new snapshots JSONB, SQL hash; PK(config_version_id,defect_id). |
@@ -48,7 +48,7 @@ Create only indexes justified by these queries. Partitioning and generalized mul
 
 ## Run lifecycle
 
-Stages: CLAIMED -> INGESTED -> RECONCILED -> REPORTED. FAILED records the last successful stage and error. Verification is separate: NOT_CHECKED, DIAGNOSTIC, PASS, FAIL. A before-fix run can be REPORTED + DIAGNOSTIC, never PASS. A completed strict after-fix run requires REPORTED + PASS. Block stage transitions if predecessor data is not complete.
+Stages are `CLAIMED -> RECONCILED -> REPORTED`; persistence failure changes a claimed run to `FAILED`. The data transaction moves to RECONCILED only after all lineage and controls commit. Atomic report registration moves it to REPORTED and sets DIAGNOSTIC or PASS. Verification states are NOT_CHECKED, DIAGNOSTIC, PASS and FAIL. A baseline run can be REPORTED + DIAGNOSTIC; a completed strict run requires REPORTED + PASS.
 
 Use transactions described in ARCHITECTURE.md. Retry a failed report without re-ingestion. For config fixes create a child version and a new run fingerprint; old rows and report artifacts stay immutable. Support deletion only for explicit local cleanup, not as normal replay semantics.
 

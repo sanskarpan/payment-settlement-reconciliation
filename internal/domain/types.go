@@ -43,6 +43,8 @@ type RawRow struct {
 	Ordinal   int
 	LineStart int
 	LineEnd   int
+	ByteStart int64
+	ByteEnd   int64
 	Raw       map[string]string
 	Canonical map[string]string
 	// Serialized payloads allow the orchestration layer to release the parser's

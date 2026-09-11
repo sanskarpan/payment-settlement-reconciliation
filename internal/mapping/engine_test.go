@@ -1,6 +1,7 @@
 package mapping
 
 import (
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -45,5 +46,31 @@ func TestReferenceMappingBaselineHasKnownDiagnostics(t *testing.T) {
 	}
 	if len(issues) != 0 {
 		t.Fatalf("settlement issues=%v", issues)
+	}
+}
+
+func TestEngineRejectsInvalidModeAndMissingAmounts(t *testing.T) {
+	row := domain.RawRow{Source: domain.SourcePayment, Kind: domain.RowTransaction, LineStart: 2, Transaction: "ORDER", Description: "any", Canonical: map[string]string{}}
+	rule := domain.ConfigRule{Source: domain.SourcePayment, TransactionType: "ORDER", Description: "any", AmountField: "product_sales", RecordRef: "LITERAL"}
+	if _, _, _, err := (Engine{Rules: []domain.ConfigRule{rule}, Mode: "typo"}).Map([]domain.RawRow{row}); err == nil {
+		t.Fatal("invalid mode accepted")
+	}
+	if _, _, _, err := (Engine{Rules: []domain.ConfigRule{rule}, Mode: Strict}).Map([]domain.RawRow{row}); err == nil {
+		t.Fatal("missing mapped amount accepted")
+	}
+	row.Canonical["product_sales"] = "92233720368547758.07"
+	if got, err := amountFor(row, "product_sales"); err != nil || got != math.MaxInt64 {
+		t.Fatalf("max cents got=%d err=%v", got, err)
+	}
+}
+
+func TestRecordRefExpansionRejectsUnknownTokenAndDelimiter(t *testing.T) {
+	row := domain.RawRow{LineStart: 3, TxnRef: "id", Canonical: map[string]string{}}
+	if _, err := expand("unknown_field", row); err == nil {
+		t.Fatal("unknown field-like token accepted")
+	}
+	row.TxnRef = "bad\x1fvalue"
+	if _, err := expand("txn_ref", row); err == nil {
+		t.Fatal("reserved delimiter accepted")
 	}
 }

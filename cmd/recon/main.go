@@ -76,6 +76,9 @@ func verify(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
+	}
 	if *file == "" {
 		return fmt.Errorf("--report is required")
 	}
@@ -93,6 +96,9 @@ func verifyDB(args []string) error {
 	expected := f.Int64("expected-rows", 0, "optional exact source-row count")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
 	}
 	if *url == "" || *runID <= 0 {
 		return fmt.Errorf("--postgres-url and positive --run-id are required")
@@ -119,6 +125,9 @@ func explain(args []string) error {
 	line := f.Int("source-line", 0, "physical source line")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
 	}
 	if *url == "" || *runID <= 0 {
 		return fmt.Errorf("--postgres-url and positive --run-id are required")
@@ -148,8 +157,14 @@ func patchConfig(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
+	}
 	if *in == "" || *out == "" || *source == "" {
 		return fmt.Errorf("--input, --output and --source are required")
+	}
+	if *source != string(domain.SourcePayment) && *source != string(domain.SourceSettlement) {
+		return fmt.Errorf("--source must be payment or settlement")
 	}
 	ops, err := mapping.LoadPatch(*patch)
 	if err != nil {
@@ -171,6 +186,9 @@ func importConfig(args []string) error {
 	url := f.String("postgres-url", os.Getenv("DATABASE_URL"), "PostgreSQL URL")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
 	}
 	if *pc == "" || *sc == "" || *url == "" {
 		return fmt.Errorf("--payment-config, --settlement-config and --postgres-url or DATABASE_URL are required")
@@ -213,6 +231,9 @@ func migrate(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
+	}
 	if *url == "" {
 		return fmt.Errorf("--postgres-url or DATABASE_URL is required")
 	}
@@ -246,6 +267,12 @@ func run(args []string) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
+	}
+	if *mode != string(mapping.Diagnostic) && *mode != string(mapping.Strict) {
+		return fmt.Errorf("--mode must be %q or %q", mapping.Diagnostic, mapping.Strict)
+	}
 	for k, v := range map[string]string{"payments": *payments, "settlements": *settlements, "settlement-id": *sid} {
 		if v == "" {
 			return fmt.Errorf("--%s is required", k)
@@ -255,6 +282,17 @@ func run(args []string) error {
 		for k, v := range map[string]string{"payment-config": *pc, "settlement-config": *sc} {
 			if v == "" {
 				return fmt.Errorf("--%s is required unless --config-version is supplied", k)
+			}
+		}
+	}
+	for _, input := range []string{*payments, *settlements, *pc, *sc} {
+		if input != "" {
+			same, pathErr := samePath(input, *output)
+			if pathErr != nil {
+				return pathErr
+			}
+			if same {
+				return fmt.Errorf("--output must not overwrite input %s", input)
 			}
 		}
 	}
@@ -362,20 +400,23 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	groups := reconcile.BuildGroups(pe, se)
+	groups, err := reconcile.BuildGroups(pe, se)
+	if err != nil {
+		return err
+	}
 	memoryMark("groups-built")
 	header := int64(0)
 	currency := ""
+	metadataCount := 0
 	for _, r := range s {
-		if r.Kind == domain.RowMetadata {
-			var e error
-			header, e = amountFromRaw(r.Raw["total-amount"])
-			if e != nil {
-				return e
-			}
+		if r.Kind == domain.RowMetadata && r.SettlementID == *sid {
+			metadataCount++
+			header = r.ReconAmount
 			currency = r.Currency
-			break
 		}
+	}
+	if metadataCount != 1 {
+		return fmt.Errorf("selected settlement %q has %d metadata rows, want exactly 1", *sid, metadataCount)
 	}
 	var settlementActivity int64
 	for _, row := range s {
@@ -412,6 +453,11 @@ func run(args []string) error {
 	}
 	if err := report.Write(*output, result, meta); err != nil {
 		return err
+	}
+	if m == mapping.Strict {
+		if err := report.Verify(*output); err != nil {
+			return fmt.Errorf("verify generated report: %w", err)
+		}
 	}
 	memoryMark("report-written")
 	if pool != nil {
@@ -460,13 +506,26 @@ func mergeSummary(a, b domain.Summary) domain.Summary {
 	}
 	return out
 }
-func amountFromRaw(s string) (int64, error) { return money.ParseCents(s) }
+func samePath(a, b string) (bool, error) {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb), nil
+}
 func profile(args []string) error {
 	f := flag.NewFlagSet("profile", flag.ContinueOnError)
 	p := f.String("payments", "", "payments CSV")
 	s := f.String("settlements", "", "settlements TSV")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if f.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", f.Args())
 	}
 	if *p == "" || *s == "" {
 		return fmt.Errorf("--payments and --settlements are required")

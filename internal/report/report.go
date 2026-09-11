@@ -156,14 +156,35 @@ func Verify(path string) error {
 			return fmt.Errorf("sheet %d=%q, want %q", i, got[i], name)
 		}
 	}
-	for _, cell := range []string{"E5", "E7", "E11", "E16", "E20", "E21", "E24", "E25", "D35"} {
+	var zeroCells []string
+	for _, row := range summaryRows {
+		zeroCells = append(zeroCells, fmt.Sprintf("E%d", row.row))
+	}
+	zeroCells = append(zeroCells, "D35")
+	for _, cell := range zeroCells {
 		v, err := f.GetCellValue("Summary", cell)
 		if err != nil {
 			return err
 		}
 		if v != "0" && v != "0.00" && v != "0.0" {
-			return fmt.Errorf("Summary!%s=%q, want zero", cell, v)
+			return fmt.Errorf("summary cell %s=%q, want zero", cell, v)
 		}
+	}
+	infoRows, err := f.GetRows("Run Info")
+	if err != nil {
+		return err
+	}
+	info := map[string]string{}
+	for i, row := range infoRows {
+		if i > 0 && len(row) >= 2 {
+			info[row[0]] = row[1]
+		}
+	}
+	if info["mode"] != "strict" {
+		return fmt.Errorf("run info mode=%q, want strict", info["mode"])
+	}
+	if info["mapping_issues"] != "0" {
+		return fmt.Errorf("run info mapping_issues=%q, want 0", info["mapping_issues"])
 	}
 	for _, name := range []string{"Consolidated Data", "Source Rows", "Contributions"} {
 		rows, err := f.GetRows(name)
@@ -239,27 +260,32 @@ func writeSummary(f *excelize.File, r domain.RunResult, st map[string]int) error
 			p = r.Summary.Buckets[x.field][domain.SourcePayment]
 			s = r.Summary.Buckets[x.field][domain.SourceSettlement]
 		} else {
+			var fields []string
 			switch x.row {
 			case 4:
-				for _, f := range []string{"sales_product_charges", "sales_tax", "sales_shipping", "sales_amazon_fees", "sales_inventory_reimbursements", "sales_other"} {
-					p += r.Summary.Buckets[f][domain.SourcePayment]
-					s += r.Summary.Buckets[f][domain.SourceSettlement]
-				}
+				fields = []string{"sales_product_charges", "sales_tax", "sales_shipping", "sales_amazon_fees", "sales_inventory_reimbursements", "sales_other"}
 			case 15:
-				for _, f := range []string{"refunded_expenses", "refunded_sales"} {
-					p += r.Summary.Buckets[f][domain.SourcePayment]
-					s += r.Summary.Buckets[f][domain.SourceSettlement]
-				}
+				fields = []string{"refunded_expenses", "refunded_sales"}
 			case 19:
-				for _, f := range []string{"expenses_promotional_rebates", "expenses_fba_fees", "expenses_cost_of_advertising", "expenses_reversed_reimbursements", "expenses_amazon_fees", "expenses_other"} {
-					p += r.Summary.Buckets[f][domain.SourcePayment]
-					s += r.Summary.Buckets[f][domain.SourceSettlement]
-				}
+				fields = []string{"expenses_promotional_rebates", "expenses_fba_fees", "expenses_cost_of_advertising", "expenses_reversed_reimbursements", "expenses_amazon_fees", "expenses_other"}
 			}
+			var err error
+			p, err = sumFields(r.Summary, domain.SourcePayment, fields)
+			if err != nil {
+				return err
+			}
+			s, err = sumFields(r.Summary, domain.SourceSettlement, fields)
+			if err != nil {
+				return err
+			}
+		}
+		difference, err := money.Sub(p, s)
+		if err != nil {
+			return fmt.Errorf("summary row %d difference: %w", x.row, err)
 		}
 		setValue(f, sh, fmt.Sprintf("C%d", x.row), reportAmount(p))
 		setValue(f, sh, fmt.Sprintf("D%d", x.row), reportAmount(s))
-		setValue(f, sh, fmt.Sprintf("E%d", x.row), reportAmount(p-s))
+		setValue(f, sh, fmt.Sprintf("E%d", x.row), reportAmount(difference))
 		f.SetCellStyle(sh, fmt.Sprintf("C%d", x.row), fmt.Sprintf("E%d", x.row), st["money"])
 		if x.field == "" {
 			f.SetCellStyle(sh, fmt.Sprintf("B%d", x.row), fmt.Sprintf("E%d", x.row), st["sub"])
@@ -269,7 +295,15 @@ func writeSummary(f *excelize.File, r domain.RunResult, st map[string]int) error
 	setValue(f, sh, "D34", reportAmount(r.SettlementHeader))
 	f.SetCellStyle(sh, "D34", "D34", st["money"])
 	setValue(f, sh, "B35", "Activity minus header control")
-	setValue(f, sh, "D35", reportAmount(sumSummary(r.Summary, domain.SourceSettlement)-r.SettlementHeader))
+	activity, err := sumSummary(r.Summary, domain.SourceSettlement)
+	if err != nil {
+		return err
+	}
+	controlDifference, err := money.Sub(activity, r.SettlementHeader)
+	if err != nil {
+		return fmt.Errorf("settlement header difference: %w", err)
+	}
+	setValue(f, sh, "D35", reportAmount(controlDifference))
 	f.SetCellStyle(sh, "D35", "D35", st["money"])
 	if err := f.SetColWidth(sh, "B", "B", 30); err != nil {
 		return err
@@ -286,12 +320,28 @@ func writeSummary(f *excelize.File, r domain.RunResult, st map[string]int) error
 	return nil
 }
 
-func sumSummary(s domain.Summary, src domain.Source) int64 {
+func sumSummary(s domain.Summary, src domain.Source) (int64, error) {
 	var v int64
 	for _, m := range s.Buckets {
-		v += m[src]
+		var err error
+		v, err = money.Add(v, m[src])
+		if err != nil {
+			return 0, err
+		}
 	}
-	return v
+	return v, nil
+}
+
+func sumFields(s domain.Summary, src domain.Source, fields []string) (int64, error) {
+	var total int64
+	for _, field := range fields {
+		var err error
+		total, err = money.Add(total, s.Buckets[field][src])
+		if err != nil {
+			return 0, fmt.Errorf("summary subtotal %s: %w", field, err)
+		}
+	}
+	return total, nil
 }
 
 func writeGroups(f *excelize.File, groups []*domain.Group, st map[string]int) error {
@@ -319,13 +369,17 @@ func writeGroups(f *excelize.File, groups []*domain.Group, st map[string]int) er
 		} else if len(g.SettlementRows) == 0 {
 			status = "unreconciled_payment"
 		}
+		difference, err := money.Sub(g.PaymentAmount, g.SettlementAmt)
+		if err != nil {
+			return fmt.Errorf("group %q difference: %w", displayKey(g.KeyParts), err)
+		}
 		values := []interface{}{
 			excelize.Cell{Value: streamString(status)}, excelize.Cell{Value: streamString(string(g.Scope))},
 			excelize.Cell{Value: streamString(g.SettlementID)}, excelize.Cell{Value: streamString(g.Currency)},
 			excelize.Cell{Value: streamString(displayKey(g.KeyParts))}, excelize.Cell{Value: len(g.PaymentRows)},
 			excelize.Cell{StyleID: st["money"], Value: reportAmount(g.PaymentAmount)},
 			excelize.Cell{Value: len(g.SettlementRows)}, excelize.Cell{StyleID: st["money"], Value: reportAmount(g.SettlementAmt)},
-			excelize.Cell{StyleID: st["money"], Value: reportAmount(g.PaymentAmount - g.SettlementAmt)},
+			excelize.Cell{StyleID: st["money"], Value: reportAmount(difference)},
 			excelize.Cell{Value: streamString(bucketNames(g.PaymentBuckets))}, excelize.Cell{Value: streamString(bucketNames(g.SettleBuckets))},
 		}
 		if err = sw.SetRow(fmt.Sprintf("A%d", row), values); err != nil {
@@ -367,7 +421,7 @@ func writeRows(f *excelize.File, r domain.RunResult, st map[string]int) error {
 	for _, list := range [][]domain.MappedRow{r.PaymentRows, r.SettlementRows} {
 		for _, m := range list {
 			x := m.Row
-			v := []interface{}{excelize.Cell{Value: streamString(string(x.Source))}, excelize.Cell{Value: streamString(string(x.Kind))}, excelize.Cell{Value: x.LineStart}, excelize.Cell{Value: x.Ordinal}, excelize.Cell{Value: streamString(x.SettlementID)}, excelize.Cell{Value: streamString(string(x.Scope))}, excelize.Cell{Value: streamString(x.Status)}, excelize.Cell{Value: streamString(x.Transaction)}, excelize.Cell{Value: streamString(x.Description)}, excelize.Cell{Value: streamString(x.SKU)}, excelize.Cell{Value: streamString(x.TxnRef)}, excelize.Cell{Value: streamString(x.KeyDate)}, excelize.Cell{StyleID: st["money"], Value: reportAmount(x.ReconAmount)}, excelize.Cell{Value: streamString(m.Key)}}
+			v := []interface{}{excelize.Cell{Value: streamString(string(x.Source))}, excelize.Cell{Value: streamString(string(x.Kind))}, excelize.Cell{Value: x.LineStart}, excelize.Cell{Value: x.Ordinal}, excelize.Cell{Value: streamString(x.SettlementID)}, excelize.Cell{Value: streamString(string(x.Scope))}, excelize.Cell{Value: streamString(x.Status)}, excelize.Cell{Value: streamString(x.Transaction)}, excelize.Cell{Value: streamString(x.Description)}, excelize.Cell{Value: streamString(x.SKU)}, excelize.Cell{Value: streamString(x.TxnRef)}, excelize.Cell{Value: streamString(x.KeyDate)}, excelize.Cell{StyleID: st["money"], Value: reportAmount(x.ReconAmount)}, excelize.Cell{Value: streamString(displayKey(m.KeyParts))}}
 			if err = sw.SetRow(fmt.Sprintf("A%d", row), v); err != nil {
 				return err
 			}
@@ -423,7 +477,11 @@ func writeIssues(f *excelize.File, r domain.RunResult, st map[string]int) error 
 	if len(r.Issues) == 0 {
 		setValue(f, sh, "A2", "No mapping issues")
 	}
-	if err := f.SetSheetDimension(sh, fmt.Sprintf("A1:A%d", len(r.Issues)+2)); err != nil {
+	last := len(r.Issues) + 1
+	if last < 2 {
+		last = 2
+	}
+	if err := f.SetSheetDimension(sh, fmt.Sprintf("A1:A%d", last)); err != nil {
 		return err
 	}
 	return nil

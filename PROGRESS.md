@@ -1,5 +1,17 @@
 # Progress log
 
+## 2026-09-11 — independent audit hardening
+
+An adversarial code and contract audit found and fixed concrete gaps rather than accepting the earlier checklist at face value. Exact arithmetic now checks subtraction, grouping, report subtotals and the full signed-cent boundary. Parsing rejects unknown payment statuses, missing Released dates, non-literal settlement time zones, cross-settlement metadata inheritance, missing mapped amounts, malformed metadata, invalid UTF-8, oversized inputs, and inconsistent posted dates; BOM-aware byte spans, timestamps, event class and metadata controls are persisted.
+
+Mapping modes, config headers, targets, templates and optional-absent behavior are validated. Patch files now require their complete schema, unique operations, guarded existing values and every requested source line; publication is atomic and cannot overwrite its input. Record/group identities and run/config hashes use collision-safe encodings. Strict persistence checks per-key bucket equality as well as totals.
+
+Migrations `006_audit_hardening.sql` and `007_canonical_config_hash.sql` add exact-money checks, composite cross-run foreign keys, rule/config/source lineage enforcement, complete summary-field seeds, byte/time provenance, frozen-parent move/delete protection, migration checksums and canonical config hashes. Report lifecycle now remains RECONCILED until an artifact is atomically registered. The independent verifier uses a full outer summary recomputation, requires exactly one selected header control, and rejects strict persisted issues. The XLSX verifier checks every displayed leaf/subtotal delta, the header control, strict mode and zero issues.
+
+Observed audit validation: unit tests, race tests, vet, randomized tests, shell syntax, Shellcheck and Staticcheck passed. `make before` retained 2 diagnostics; `make after` produced 22,737 groups with zero issues and passed the strengthened workbook verifier and ZIP integrity check. A fresh PostgreSQL replay retained 78,006 rows per run; baseline had 5,973 expected bucket differences and fixed had zero, with zero unmatched rows, amount mismatches, summary mismatches and header mismatches. Dump/restore compared nine audit tables exactly, including 156,012 source rows, 660,502 mappings, 45,474 groups, 156,010 memberships, seven checksummed migrations and two verified report artifacts. Direct probes rejected a frozen-rule move, frozen-version deletion, NaN money, cross-run membership, cross-source rule use and altered migration checksum. The canonical database hash matched recomputation for both a newly imported baseline and its SQL-fixed child.
+
+The first vulnerability scan found reachable issues in Excelize 2.10.0, pgx 5.8.0 and transitive `x/text` 0.30.0. The audited pins are Excelize 2.11.0, pgx 5.9.2, `x/text` 0.41.0 and `x/crypto` 0.56.0. A final symbol scan reported zero reachable vulnerabilities and zero vulnerabilities in imported packages. Module-level scanning still identifies the deprecated `x/crypto/openpgp` package, which has no fixed release and no import or call path here; Excelize brings the module in for `x/crypto/md4`.
+
 ## 2026-09-11 — checkpoint commits and visual report QA
 
 Initialized the repository and committed the completed checklist as eight ordered commits (`phase-0` through `phase-7`), with matching lightweight tags. The working tree is clean; `.env`, raw `workingData`, generated `output`, binaries, and caches remain intentionally ignored.
@@ -45,7 +57,7 @@ Implemented Phase 1 primitives and a working vertical pipeline: Go module, exact
 
 The PostgreSQL adapter now uses pgx batch/COPY paths for source rows, mappings, and groups. A local PostgreSQL run completed in strict mode with `run_id=1`, `78006` source rows, `307468` row mappings, `22737` reconciliation groups, and `verification_status=PASS`; `recon verify` passed for that workbook. The supplied Neon credentials were written to the ignored `.env`, Neon connectivity was verified, and `recon migrate` applied successfully. The database-backed config-version/SQL replay path, immutable triggers, dump restore, and failure/retry lifecycle were subsequently exercised and are covered by the top evidence entry. A full Neon raw-row replay remains intentionally unrun because the provider's COPY transfer rate is materially slower than the local fixture. Spreadsheet conversion of the 18 MB audit workbook was also stopped after LibreOffice spent over a minute processing the large sheet; workbook integrity and cell-level inspection passed.
 
-Remaining engineering work is limited to the documented operational follow-ups: visual rendering of the largest workbook sheet and reducing peak RSS below the 512 MiB target. Neither is allowed to weaken the exact-money, source-retention, SQL verification, or immutable-config gates.
+The remaining measured limitation is peak RSS above the 512 MiB engineering target. It does not change the exact-money acceptance result, but further scale work should move more lineage generation to bounded batches without weakening source retention or deterministic reporting.
 
 ## Builder log format
 
