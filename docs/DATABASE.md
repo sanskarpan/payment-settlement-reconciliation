@@ -10,12 +10,15 @@ Money columns use unconstrained `numeric` plus `valid_exact_cents` checks for fi
 
 Use database-generated IDs only as locators. Stable identity is content hash + source ordinal, not auto-increment ordering. Every derived table has run_id and prevents cross-run FK references through composite keys.
 
+Migration execution holds a session advisory lock on one dedicated pgx connection. This serializes checksum inspection, DDL, and ledger writes across concurrent application starts; cancellation uses a bounded independent context to release the lock before the connection returns to the pool.
+
 ## Tables
 
 | Table | Required columns and constraints |
 | --- | --- |
 | `source_files` | id PK, source_kind (payment/settlement/payment_config/settlement_config), path, sha256, byte_size. UNIQUE(source_kind,sha256). Conflict reuse never mutates the first recorded path. |
 | `config_versions` | id PK, name unique, parent_id FK nullable, state DRAFT/FROZEN, content_sha256 unique when frozen, created_at, note. Frozen rows cannot change. |
+| `config_hash_history` | config_version_id FK, hash_algorithm, historical content_sha256, recorded_at. Preserves the legacy delimiter-based hash when an existing frozen version is upgraded to the canonical hash algorithm; update and delete are trigger-rejected. |
 | `mapping_rules` | id PK, config_version_id FK, source, origin_file, origin_line, raw selector fields, record_ref and positive/negative targets. UNIQUE(config_version_id,source,origin_file,origin_line). Selector uniqueness is intentionally absent so original ambiguity remains representable. Frozen-parent moves are trigger-blocked. |
 | `normalization_versions` | name PK, policy JSONB, content_sha256 unique, frozen flag. |
 | `layout_versions` | name PK, layout JSONB, content_sha256 unique, frozen flag. |

@@ -10,6 +10,9 @@ Reviewed 2026-09-10. External documentation supports technical choices. The assi
 | [pgx/v5](https://pkg.go.dev/github.com/jackc/pgx/v5) | COPY support and PostgreSQL-native type handling | Bounded bulk insert and explicit numeric codecs |
 | [PostgreSQL transaction isolation](https://www.postgresql.org/docs/18/transaction-iso.html) | Transaction behavior and concurrency guarantees | Atomic ingestion and immutable completed-run reads |
 | [PostgreSQL locking](https://www.postgresql.org/docs/17/explicit-locking.html) | Row locks and transaction/session advisory-lock distinctions | Use unique run claim and row-locked retry; avoid unnecessary distributed lock service |
+| [Neon connection errors](https://neon.com/docs/connect/connection-errors) | Direct and pooled connections require TLS/SNI; pooled connections have session-feature limitations | Use the direct endpoint for migrations and verify transport failures before changing credentials |
+| [Neon pooled connections](https://neon.com/docs/changelog/2023-02-06) | The pooled hostname adds `-pooler` to the endpoint ID | Derive the pooler hostname without changing database credentials |
+| [Neon serverless driver](https://neon.com/docs/serverless/serverless-driver) | SQL-over-HTTP supports non-interactive transactions | Permit an audited operator fallback when HTTPS works but raw PostgreSQL is unavailable |
 | [Excelize stream writer](https://xuri.me/excelize/en/stream.html) | Streaming, ordered writes, flush and worksheet API constraints | Stream large audit sheets; isolate regular Summary writes |
 | [Go release history](https://go.dev/doc/devel/release) | Go 1.27.1 released September 1, 2026 | Initial toolchain pin; recheck security updates at implementation |
 

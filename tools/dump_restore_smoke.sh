@@ -10,7 +10,7 @@ dump_path=${DUMP_PATH:-output/reconciliation-smoke.dump}
 mkdir -p "$(dirname -- "$dump_path")"
 pg_dump --format=custom --no-owner --file "$dump_path" "$SOURCE_DATABASE_URL"
 pg_restore --clean --if-exists --no-owner --dbname "$RESTORE_DATABASE_URL" "$dump_path"
-for table in schema_migrations config_versions runs source_rows row_mappings summary_contributions recon_groups recon_members report_artifacts; do
+for table in schema_migrations config_versions config_hash_history runs source_rows row_mappings summary_contributions recon_groups recon_members report_artifacts; do
   source_count=$(psql "$SOURCE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select count(*) from ${table}")
   restore_count=$(psql "$RESTORE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "select count(*) from ${table}")
   if [[ "$source_count" != "$restore_count" ]]; then

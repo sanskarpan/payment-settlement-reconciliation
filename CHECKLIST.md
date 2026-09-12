@@ -88,3 +88,11 @@ Only check items supported by actual code/artifacts and verification. The checke
 - [x] Separate RECONCILED data state from atomic report registration; strengthen dump/restore comparisons.
 - [x] Upgrade vulnerable dependencies; pass unit, randomized, race, vet, Staticcheck, Shellcheck and reachable-vulnerability scans.
 - [x] Gate: fresh baseline/fixed PostgreSQL replay and fixed workbook pass with all 78,006 rows retained and zero fixed discrepancies.
+
+## Phase 9 — Neon upgrade verification
+
+- [x] Verify official direct and pooled endpoint formats and test both transports without exposing credentials.
+- [x] Apply missing migrations through Neon's supported SQL-over-HTTP transport when raw TCP is unavailable.
+- [x] Preserve legacy frozen-config hashes and backfill collision-safe canonical hashes through a checksummed migration.
+- [x] Verify remote migration checksums, canonical config hashes, exact-money constraints, cross-run lineage and frozen immutability.
+- [x] Serialize concurrent Go migrators and pass fresh replay, strict reconciliation, dump/restore, race, static analysis and vulnerability gates.

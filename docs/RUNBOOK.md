@@ -6,6 +6,8 @@ These commands describe the implemented CLI and the reproducible persistence/rep
 
 Use a local PostgreSQL instance via compose, DATABASE_URL from an ignored environment file, Go toolchain pinned in go.mod/Dockerfile, and `bin/recon`. A CLI `--run` accepts the unique stored run name or ID. Add `name` to runs with a unique constraint; it is a user label, not the idempotency key. A completed fingerprint reuses the existing run regardless of a newly requested label and reports that reuse clearly.
 
+For Neon, keep the direct endpoint in `DATABASE_URL` for migrations and other session-oriented operations. The pooled hostname inserts `-pooler` after the endpoint ID and is suitable for application workloads that benefit from PgBouncer. Both forms require TLS. A network that permits HTTPS but resets raw PostgreSQL can use Neon's SQL-over-HTTP API for an operator-controlled migration transaction; this repository's Go CLI uses pgx and therefore still requires a deployment path that permits PostgreSQL TCP. The HTTP migration fallback must compare the full migration filename and SHA-256 with `schema_migrations`, submit one file as one non-interactive transaction, and stop on any mismatch.
+
 The current CLI returns 0 for success, 1 for validation, mapping, verification, database, or I/O failure, and 2 for missing/unknown command usage. A diagnostic baseline generation returns 0 when its diagnostics/report were successfully produced, with verification=DIAGNOSTIC. Errors preserve wrapped causes without printing secrets; specialized infrastructure exit codes remain an operational enhancement.
 
 ```sh

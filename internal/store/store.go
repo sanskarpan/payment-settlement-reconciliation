@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,7 +36,9 @@ func Open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return p, nil
 }
 
-func Migrate(ctx context.Context, p *pgxpool.Pool) error {
+const migrationAdvisoryLockKey int64 = 0x5250434f4e4d4947
+
+func Migrate(ctx context.Context, p *pgxpool.Pool) (retErr error) {
 	files, err := filepath.Glob(filepath.Join("migrations", "*.sql"))
 	if err != nil {
 		return err
@@ -44,10 +47,38 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 		return fmt.Errorf("no migration files found")
 	}
 	sort.Strings(files)
-	if _, err = p.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, sha256 TEXT, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	locked := false
+	defer func() {
+		if locked {
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var unlocked bool
+			unlockErr := conn.QueryRow(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockKey).Scan(&unlocked)
+			if unlockErr != nil || !unlocked {
+				_ = conn.Conn().Close(unlockCtx)
+				if retErr == nil {
+					if unlockErr != nil {
+						retErr = fmt.Errorf("release migration lock: %w", unlockErr)
+					} else {
+						retErr = fmt.Errorf("release migration lock: lock was not held")
+					}
+				}
+			}
+		}
+		conn.Release()
+	}()
+	if _, err = conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	locked = true
+	if _, err = conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, sha256 TEXT, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return err
 	}
-	if _, err = p.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS sha256 TEXT`); err != nil {
+	if _, err = conn.Exec(ctx, `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS sha256 TEXT`); err != nil {
 		return err
 	}
 	for _, path := range files {
@@ -59,10 +90,10 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 		sum := sha256.Sum256(b)
 		digest := hex.EncodeToString(sum[:])
 		var recorded *string
-		err = p.QueryRow(ctx, `SELECT sha256 FROM schema_migrations WHERE version=$1`, version).Scan(&recorded)
+		err = conn.QueryRow(ctx, `SELECT sha256 FROM schema_migrations WHERE version=$1`, version).Scan(&recorded)
 		if err == nil {
 			if recorded == nil {
-				if _, err = p.Exec(ctx, `UPDATE schema_migrations SET sha256=$2 WHERE version=$1 AND sha256 IS NULL`, version, digest); err != nil {
+				if _, err = conn.Exec(ctx, `UPDATE schema_migrations SET sha256=$2 WHERE version=$1 AND sha256 IS NULL`, version, digest); err != nil {
 					return err
 				}
 				continue
@@ -75,7 +106,7 @@ func Migrate(ctx context.Context, p *pgxpool.Pool) error {
 		if err != pgx.ErrNoRows {
 			return err
 		}
-		tx, beginErr := p.Begin(ctx)
+		tx, beginErr := conn.Begin(ctx)
 		if beginErr != nil {
 			return beginErr
 		}
