@@ -1,0 +1,29 @@
+name: reconciliation-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Unit and race tests
+        run: |
+          go test ./...
+          go test -race ./...
+      - name: Static checks and build
+        run: |
+          go vet ./...
+          go build ./cmd/recon
+      - name: Submission artifact smoke test
+        run: make submission-smoke

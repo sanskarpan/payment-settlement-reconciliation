@@ -1,15 +1,15 @@
 # Submission acceptance
 
-The repository contains the Go reference-data pipeline, immutable PostgreSQL replay path, verified workbooks, and implementation contracts. The local acceptance evidence below is recorded in `PROGRESS.md`; external Neon raw-row replay and peak-RSS optimization remain operational limitations rather than hidden claims.
+The GitHub repository contains the Go pipeline, immutable PostgreSQL replay path, artifact hash manifest, evidence, and implementation contracts. The assignment inputs, canonical before/after workbooks and restore-tested dump are delivered as a separate package because of size and financial-data sensitivity. The local acceptance evidence below is recorded in `PROGRESS.md`; external Neon raw-row replay and peak-RSS optimization remain operational limitations rather than hidden claims.
 
 | Artifact | Required evidence |
 | --- | --- |
-| Go source and GitHub link | Clean build, meaningful tests, separation of ingestion/reconciliation/reporting; public data exposure reviewed |
+| Go source and GitHub link | Clean build, meaningful tests, separation of ingestion/reconciliation/reporting; large provided data remains in the separate artifact package |
 | README.md | Actual tested fresh-machine setup, end-to-end commands, schema rationale, assumptions and exact scope |
 | MAPPING_FIXES.sql | Executable guarded SQL; commented F01/F02/F03 blocks, no monetary plugs, tested replay |
-| output/before_fix.xlsx | Original config version, disclosed baseline ambiguity, source-derived values and audit sheets |
-| output/after_fix.xlsx | Frozen fixed version, zero leaf/subtotal differences, full lineage and preserved unmatched/excluded rows |
-| PostgreSQL dump or representative data sample | Restore tested; supports trace from source to config to report; sample limitations explicit |
+| `output/before_fix.xlsx` | Original config version, disclosed baseline ambiguity, source-derived values and audit sheets |
+| `output/after_fix.xlsx` | Frozen fixed version, zero leaf/subtotal differences, full lineage and preserved unmatched/excluded rows |
+| `output/reconciliation.dump` | Restore tested; contains both full runs and supports trace from source to config to report |
 | PROGRESS.md | Actual chronology, failed hypotheses, row-level evidence, tests and measured performance |
 | Run manifests/evidence exports | Input/config/version hashes, selected scope, counts, controls, workbook checksums |
 

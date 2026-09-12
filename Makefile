@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: test build race vet profile before after end-to-end dump-restore
+.PHONY: test build race vet profile before after end-to-end dump-restore submission-smoke
 
 build:
 	$(GO) build -o bin/recon ./cmd/recon
@@ -32,3 +32,6 @@ end-to-end:
 
 dump-restore:
 	./tools/dump_restore_smoke.sh
+
+submission-smoke:
+	./tools/submission_smoke.sh

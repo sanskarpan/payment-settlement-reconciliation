@@ -4,6 +4,53 @@ This repository contains the implementation specification and a working Go batch
 
 Build a Go CLI backed by PostgreSQL that ingests both source files into one shared table, applies versioned mapping data, reconciles shared keys, and produces independently calculated accounting summaries and auditable Excel reports. This is the PortOne SDE II assignment; the PDF is the requirements authority.
 
+## Submission artifacts
+
+| Requirement | Artifact |
+| --- | --- |
+| Go source and run instructions | This repository and the commands below |
+| Executable, commented config corrections | [MAPPING_FIXES.sql](MAPPING_FIXES.sql) |
+| Original-config report | `output/before_fix.xlsx`, in the external artifact package |
+| Corrected-config report | `output/after_fix.xlsx`, in the external artifact package |
+| Restore-tested PostgreSQL dump | `output/reconciliation.dump`, in the external artifact package |
+| Investigation history | [PROGRESS.md](PROGRESS.md) and [mapping evidence](docs/MAPPING_FIXES.md) |
+| Artifact integrity manifest | [SUBMISSION_SHA256SUMS](SUBMISSION_SHA256SUMS) |
+
+The assignment inputs, generated workbooks and database dump are delivered outside GitHub because they are large and contain provided financial data. Their expected hashes are committed in `SUBMISSION_SHA256SUMS`. `.env`, binaries, scratch reports and local database volumes are excluded.
+
+## Prerequisites and quickest verification
+
+Install Go 1.27. From a clean clone, source-only verification requires no assignment data:
+
+```sh
+make submission-smoke
+```
+
+To reproduce the reference result, copy the separately delivered `workingData/` and `output/` directories into the repository, then install Docker with Compose, PostgreSQL client tools (`psql`, `pg_dump`, and `pg_restore`), and `unzip`:
+
+```sh
+make submission-smoke
+make before
+make after
+```
+
+When the external package is present, `submission-smoke` verifies every artifact hash, verifies the strict workbook, checks both XLSX archives, and reads the dump catalog. It always compiles the CLI and runs unit tests and vet. For the complete persisted flow, start an empty PostgreSQL database and run:
+
+```sh
+docker compose down -v
+docker compose up -d db
+export DATABASE_URL='postgres://recon:recon@localhost:54329/reconciliation?sslmode=disable'
+make end-to-end
+```
+
+The end-to-end command migrates the empty database, imports and freezes the original mappings, creates and fixes an immutable child mapping version, persists separate before/after runs, generates both reports, and independently verifies database and workbook controls.
+
+## Schema rationale and assumptions
+
+Both reports enter `source_rows`, as required, with their source file, physical line/byte span, raw payload and normalized audit fields. Mapping decisions, summary contributions and reconciliation membership use separate tables because they have different grains; composite foreign keys prevent cross-run lineage. Money is parsed as checked signed cents in Go and stored as constrained exact `numeric` in PostgreSQL. Configurations and completed runs are versioned and immutable, so the original and corrected results remain independently reproducible. See [docs/DATABASE.md](docs/DATABASE.md) for the full schema.
+
+The accounting scope is settlement `12395580393`, its Settlement rows, and Released Payment rows for the same settlement. Payment key dates use the release instant converted to UTC. Reconciliation status is determined by key presence after each source is aggregated, while amount and bucket equality are separate controls. The sample workbook defines presentation structure only. Amazon's standalone Statement Summary was not supplied, so the implementation proves equality between both independent sources and the Settlement header control without claiming validation against an absent artifact. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) for the complete policy register.
+
 ## Start here
 
 1. Read [SPEC.md](SPEC.md) and [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md).
@@ -94,4 +141,4 @@ python3 tools/profile_inputs.py
 
 Requires Python 3.10+ standard library only. It reads `workingData/` and writes the three JSON evidence files under `docs/evidence/`. It does not modify input files, create a database, or produce submission reports. Commands requiring an external PostgreSQL service are explicitly identified in the runbook.
 
-Preserve the original files. Exclude raw financial data, generated workbooks, database dumps, and local secrets from a public repository unless publication is explicitly authorized. Use synthetic fixtures for public CI.
+Preserve the original files. The provided financial data and generated artifacts are distributed separately with their committed hashes. Never publish them or copy credentials from `.env` without explicit authorization.

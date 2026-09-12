@@ -6,3 +6,4 @@
 *.sql.gz
 *.log
 tools/__pycache__/
+/tmp/
