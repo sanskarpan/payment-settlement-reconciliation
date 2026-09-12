@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: test build race vet profile before after end-to-end dump-restore submission-smoke
+.PHONY: test build race vet profile reference-test before after end-to-end dump-restore submission-smoke
 
 build:
 	$(GO) build -o bin/recon ./cmd/recon
@@ -16,6 +16,12 @@ vet:
 
 profile:
 	$(GO) run ./cmd/recon profile --payments workingData/amazon_payments_data.csv --settlements workingData/amazon_settlements_data.txt
+
+reference-test:
+	test -s workingData/amazon_payments_data.csv
+	test -s workingData/amazon_settlements_data.txt
+	$(GO) test ./internal/ingest -run TestReferenceParsers -count=1
+	$(GO) test ./internal/mapping -run TestReferenceMappingBaselineHasKnownDiagnostics -count=1
 
 before: build
 	./bin/recon run --payments workingData/amazon_payments_data.csv --settlements workingData/amazon_settlements_data.txt --payment-config workingData/amazon_payment_configs_au_old.csv --settlement-config workingData/amazon_settlement_configs_au.csv --settlement-id 12395580393 --output output/before_fix.xlsx --mode diagnostic-baseline

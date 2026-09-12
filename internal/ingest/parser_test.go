@@ -1,6 +1,8 @@
 package ingest
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -22,7 +24,13 @@ func TestPaymentComponentConservation(t *testing.T) {
 
 func TestReferenceParsers(t *testing.T) {
 	root := filepath.Join("..", "..", "workingData")
-	p, _, err := ParsePayments(filepath.Join(root, "amazon_payments_data.csv"))
+	paymentPath := filepath.Join(root, "amazon_payments_data.csv")
+	if _, err := os.Stat(paymentPath); errors.Is(err, os.ErrNotExist) {
+		t.Skip("reference data package is not installed")
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	p, _, err := ParsePayments(paymentPath)
 	if err != nil {
 		t.Fatal(err)
 	}

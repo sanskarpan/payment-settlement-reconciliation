@@ -30,6 +30,7 @@ To reproduce the reference result, copy the separately delivered `workingData/` 
 
 ```sh
 make submission-smoke
+make reference-test
 make before
 make after
 ```
