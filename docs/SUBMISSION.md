@@ -1,5 +1,7 @@
 # Submission acceptance
 
+GitHub source repository: `https://github.com/sanskarpan/payment-settlement-reconciliation` (private; grant the reviewer access when submitting).
+
 The GitHub repository contains the Go pipeline, immutable PostgreSQL replay path, artifact hash manifest, evidence, and implementation contracts. The assignment inputs, canonical before/after workbooks and restore-tested dump are delivered as a separate package because of size and financial-data sensitivity. The local acceptance evidence below is recorded in `PROGRESS.md`; external Neon raw-row replay and peak-RSS optimization remain operational limitations rather than hidden claims.
 
 | Artifact | Required evidence |

@@ -102,4 +102,4 @@ Only check items supported by actual code/artifacts and verification. The checke
 - [x] Put guarded F01/F02/F03 DELETE, UPDATE and history INSERT statements directly in `MAPPING_FIXES.sql` and execute the artifact on PostgreSQL.
 - [x] Generate canonical before/after workbooks and a current restore-tested PostgreSQL dump; commit their hashes and package them separately from GitHub.
 - [x] Make README setup, schema rationale, assumptions and submission inventory self-contained.
-- [ ] Add clean-clone CI and reproduce the documented flow from the pushed GitHub repository.
+- [x] Add clean-clone CI and reproduce the documented flow from the pushed GitHub repository.
