@@ -32,7 +32,7 @@ To assemble the exact files that should accompany the public GitHub link, run:
 make package-submission
 ```
 
-This creates `output/submission/` and `output/portone-sde2-submission-artifacts.zip`, including the mapping SQL, both canonical reports, the restore-tested database dump, progress log, checksums, and delivery instructions. The generated package remains ignored by Git and is intended for the separate Drive or email delivery described below.
+This creates `output/submission/`, `output/portone-sde2-submission-artifacts.zip`, and its `.sha256` sidecar, including the mapping SQL, both canonical reports, the restore-tested database dump, progress log, checksums, and delivery instructions. The generated package remains ignored by Git and is intended for the separate Drive or email delivery described below.
 
 To reproduce the reference result, copy the separately delivered `workingData/` and `output/` directories into the repository, then install Docker with Compose, PostgreSQL client tools (`psql`, `pg_dump`, and `pg_restore`), and `unzip`:
 

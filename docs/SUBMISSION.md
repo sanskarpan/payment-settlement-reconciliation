@@ -4,7 +4,7 @@ GitHub source repository: `https://github.com/sanskarpan/payment-settlement-reco
 
 The GitHub repository contains the Go pipeline, immutable PostgreSQL replay path, artifact hash manifest, evidence, and implementation contracts. The assignment inputs, canonical before/after workbooks and restore-tested dump are delivered as a separate package because of size and financial-data sensitivity. The local acceptance evidence below is recorded in `PROGRESS.md`; external Neon raw-row replay and peak-RSS optimization remain operational limitations rather than hidden claims.
 
-Run `make package-submission` to create the verified delivery directory at `output/submission/` and its single-file archive at `output/portone-sde2-submission-artifacts.zip`. Send that archive with the public repository URL. It deliberately excludes credentials and the supplied financial input files.
+Run `make package-submission` to create the verified delivery directory at `output/submission/`, its single-file archive at `output/portone-sde2-submission-artifacts.zip`, and the archive's `.sha256` sidecar. Send the archive and checksum with the public repository URL. They deliberately exclude credentials and the supplied financial input files.
 
 | Artifact | Required evidence |
 | --- | --- |

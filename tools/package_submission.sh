@@ -33,6 +33,7 @@ repo = Path(sys.argv[1]).resolve()
 output = repo / "output"
 target = output / "submission"
 archive = output / "portone-sde2-submission-artifacts.zip"
+archive_checksum = output / "portone-sde2-submission-artifacts.zip.sha256"
 
 files = {
     "MAPPING_FIXES.sql": repo / "MAPPING_FIXES.sql",
@@ -107,9 +108,14 @@ with tempfile.TemporaryDirectory(prefix="recon-submission-") as temp_name:
             info.external_attr = 0o100644 << 16
             zf.writestr(info, path.read_bytes(), compresslevel=6)
     temp_archive.replace(archive)
+    archive_digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    archive_checksum.write_text(
+        f"{archive_digest}  {archive.name}\n", encoding="ascii"
+    )
 
 print(target)
 print(archive)
+print(archive_checksum)
 PY
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -121,5 +127,6 @@ unzip -tq output/submission/before_fix.xlsx
 unzip -tq output/submission/after_fix.xlsx
 pg_restore --list output/submission/reconciliation.dump >/dev/null
 unzip -tq output/portone-sde2-submission-artifacts.zip
+(cd output && shasum -a 256 -c portone-sde2-submission-artifacts.zip.sha256)
 
 echo 'submission package created and verified'
