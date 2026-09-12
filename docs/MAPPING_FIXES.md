@@ -64,9 +64,9 @@ Payment physical lines: 14661, 17010, 17024, 17464, 18036, 19050, 19051, 19186, 
 
 Do not modify REFUND low_value_goods merely by analogy: it has no nonzero selected rows in this fixture. A future nonzero activation needs its own investigation and conservation test.
 
-## Required MAPPING_FIXES.sql implementation
+## MAPPING_FIXES.sql implementation
 
-The root-level `MAPPING_FIXES.sql` is the executable psql wrapper, and migration `003_config_replay.sql` contains its guarded functions. The wrapper must be run with a caller-selected frozen baseline ID and new child name; it never mutates the original version.
+The root-level `MAPPING_FIXES.sql` contains the executable, guarded DELETE/UPDATE/history INSERT blocks required for submission. It clones a caller-selected frozen baseline into a draft child, applies all three blocks in one transaction, verifies affected-row counts, records before/after evidence, computes the canonical content hash through the freeze trigger, and never mutates the original version. Migration `003_config_replay.sql` retains the same server-side replay capability for the Go end-to-end harness.
 
 - One commented block per defect F01/F02/F03: original rule, new rule, evidence, financial interpretation and expected delta.
 - Target only a caller-selected DRAFT child config version cloned from the frozen original. The SQL executor uses one transaction.

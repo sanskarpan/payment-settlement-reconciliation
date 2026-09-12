@@ -96,3 +96,10 @@ Only check items supported by actual code/artifacts and verification. The checke
 - [x] Preserve legacy frozen-config hashes and backfill collision-safe canonical hashes through a checksummed migration.
 - [x] Verify remote migration checksums, canonical config hashes, exact-money constraints, cross-run lineage and frozen immutability.
 - [x] Serialize concurrent Go migrators and pass fresh replay, strict reconciliation, dump/restore, race, static analysis and vulnerability gates.
+
+## Phase 10 — rubric and submission audit
+
+- [x] Put guarded F01/F02/F03 DELETE, UPDATE and history INSERT statements directly in `MAPPING_FIXES.sql` and execute the artifact on PostgreSQL.
+- [ ] Track the assignment inputs, canonical before/after workbooks and a current restore-tested PostgreSQL dump without tracking credentials.
+- [ ] Make README setup, schema rationale, assumptions and submission inventory self-contained.
+- [ ] Add clean-clone CI and reproduce the documented flow from the pushed GitHub repository.
