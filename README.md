@@ -1,153 +1,141 @@
 # Amazon Payments / Settlement Reconciliation
 
-This repository contains the implementation specification and a working Go batch pipeline. The implementation parses the supplied reports, applies immutable config-driven mappings, aggregates and reconciles keys, persists auditable lineage to PostgreSQL, replays guarded mapping fixes, and writes verified Excel workbooks.
+A Go CLI that ingests Amazon Payments and Settlement reports into PostgreSQL, applies versioned mapping configurations, reconciles records across different source grains, and generates before-fix and after-fix Excel reports with source-row lineage.
 
-Build a Go CLI backed by PostgreSQL that ingests both source files into one shared table, applies versioned mapping data, reconciles shared keys, and produces independently calculated accounting summaries and auditable Excel reports. This is the PortOne SDE II assignment; the PDF is the requirements authority.
+## Prerequisites
 
-## Submission artifacts
+- Go 1.27
+- Docker with Compose
+- PostgreSQL client tools: `psql`, `pg_dump`, and `pg_restore`
+- `unzip`
 
-| Requirement | Artifact |
-| --- | --- |
-| Go source and run instructions | This repository and the commands below |
-| Executable, commented config corrections | [MAPPING_FIXES.sql](MAPPING_FIXES.sql) |
-| Original-config report | `output/before_fix.xlsx`, in the external artifact package |
-| Corrected-config report | `output/after_fix.xlsx`, in the external artifact package |
-| Restore-tested PostgreSQL dump | `output/reconciliation.dump`, in the external artifact package |
-| Investigation history | [PROGRESS.md](PROGRESS.md) and [mapping evidence](docs/MAPPING_FIXES.md) |
-| Artifact integrity manifest | [SUBMISSION_SHA256SUMS](SUBMISSION_SHA256SUMS) |
+Place the five supplied assignment files at these paths without modifying them:
 
-The assignment inputs, generated workbooks and database dump are delivered outside GitHub because they are large and contain provided financial data. Their expected hashes are committed in `SUBMISSION_SHA256SUMS`. `.env`, binaries, scratch reports and local database volumes are excluded.
-
-## Prerequisites and quickest verification
-
-Install Go 1.27. From a clean clone, source-only verification requires no assignment data:
-
-```sh
-make submission-smoke
+```text
+workingData/amazon_payments_data.csv
+workingData/amazon_settlements_data.txt
+workingData/amazon_payment_configs_au_old.csv
+workingData/amazon_settlement_configs_au.csv
+workingData/amazon_sample_output_report.xlsx
 ```
 
-To assemble the exact files that should accompany the public GitHub link, run:
+`workingData/`, `output/`, and `.env` are intentionally ignored by Git.
 
-```bash
-make package-submission
-```
+## Run the full flow
 
-This creates `output/submission/`, `output/portone-sde2-submission-artifacts.zip`, and its `.sha256` sidecar, including the mapping SQL, both canonical reports, the restore-tested database dump, progress log, checksums, and delivery instructions. The generated package remains ignored by Git and is intended for the separate Drive or email delivery described below.
-
-To reproduce the reference result, copy the separately delivered `workingData/` and `output/` directories into the repository, then install Docker with Compose, PostgreSQL client tools (`psql`, `pg_dump`, and `pg_restore`), and `unzip`:
+From a clean clone, start an empty PostgreSQL database and run the complete ingest, mapping-fix, reconciliation, report, and verification flow:
 
 ```sh
-make submission-smoke
-make reference-test
-make before
-make after
-```
-
-When the external package is present, `submission-smoke` verifies every artifact hash, verifies the strict workbook, checks both XLSX archives, and reads the dump catalog. It always compiles the CLI and runs unit tests and vet. For the complete persisted flow, start an empty PostgreSQL database and run:
-
-```sh
-docker compose down -v
 docker compose up -d db
 export DATABASE_URL='postgres://recon:recon@localhost:54329/reconciliation?sslmode=disable'
 make end-to-end
 ```
 
-The end-to-end command migrates the empty database, imports and freezes the original mappings, creates and fixes an immutable child mapping version, persists separate before/after runs, generates both reports, and independently verifies database and workbook controls.
+`make end-to-end` performs the following steps:
 
-## Schema rationale and assumptions
+1. Builds the CLI and applies all checksummed migrations.
+2. Imports and freezes the original payment and settlement mapping configs.
+3. Creates a child config version and applies the mapping corrections.
+4. Ingests both untouched source files into the shared `source_rows` table.
+5. Persists separate baseline and fixed runs with mapping and source lineage.
+6. Aggregates each source before reconciling on the expanded `record_ref`.
+7. Generates before-fix and after-fix workbooks.
+8. Verifies the workbook and independently recomputes database controls.
 
-Both reports enter `source_rows`, as required, with their source file, physical line/byte span, raw payload and normalized audit fields. Mapping decisions, summary contributions and reconciliation membership use separate tables because they have different grains; composite foreign keys prevent cross-run lineage. Money is parsed as checked signed cents in Go and stored as constrained exact `numeric` in PostgreSQL. Configurations and completed runs are versioned and immutable, so the original and corrected results remain independently reproducible. See [docs/DATABASE.md](docs/DATABASE.md) for the full schema.
+The generated workbooks are:
 
-The accounting scope is settlement `12395580393`, its Settlement rows, and Released Payment rows for the same settlement. Payment key dates use the release instant converted to UTC. Reconciliation status is determined by key presence after each source is aggregated, while amount and bucket equality are separate controls. The sample workbook defines presentation structure only. Amazon's standalone Statement Summary was not supplied, so the implementation proves equality between both independent sources and the Settlement header control without claiming validation against an absent artifact. See [docs/ASSUMPTIONS.md](docs/ASSUMPTIONS.md) for the complete policy register.
+```text
+output/e2e_before_fix.xlsx
+output/e2e_after_fix.xlsx
+```
 
-## Start here
+The command requires an empty database. To reset the included local database before another complete replay:
 
-1. Read [SPEC.md](SPEC.md) and [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md).
-2. Read [ARCHITECTURE.md](ARCHITECTURE.md), [docs/DATABASE.md](docs/DATABASE.md), and [docs/MAPPING_ENGINE.md](docs/MAPPING_ENGINE.md).
-3. Read [docs/MAPPING_FIXES.md](docs/MAPPING_FIXES.md), [docs/RECONCILIATION.md](docs/RECONCILIATION.md), and [DESIGN.md](DESIGN.md).
-4. Review [CHECKLIST.md](CHECKLIST.md), [docs/BUILDER_HANDOFF.md](docs/BUILDER_HANDOFF.md), and the actual evidence in [PROGRESS.md](PROGRESS.md).
+```sh
+docker compose down -v
+docker compose up -d db
+```
 
-| Document | Owns |
-| --- | --- |
-| [SPEC.md](SPEC.md) | Scope, requirements, acceptance, non-goals |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Modules, data flow, transaction boundaries |
-| [DESIGN.md](DESIGN.md) | Finance-facing workbook and CLI design |
-| [CHECKLIST.md](CHECKLIST.md) | Ordered build tasks and evidence gates |
-| [Data contract](docs/DATA_CONTRACT.md) | Headers, amounts, dates, population selection |
-| [Database](docs/DATABASE.md) | Tables, constraints, indexes, lifecycle |
-| [Mapping engine](docs/MAPPING_ENGINE.md) | Matching, templates, sign routing, ambiguity |
-| [Mapping fixes](docs/MAPPING_FIXES.md) | Observed defects and SQL change contract |
-| [Reconciliation](docs/RECONCILIATION.md) | Aggregation, matching, invariants, audit |
-| [Testing](docs/TEST_PLAN.md) | Unit, integration, property and dataset checks |
-| [Runbook](docs/RUNBOOK.md) | Commands, replay, dump, recovery |
-| [Decisions](docs/DECISIONS.md) | Alternatives and reasons |
-| [Research](docs/RESEARCH.md) | External primary sources and limits |
-| [Evidence](docs/evidence/README.md) | Reproducible observations and controls |
-| [Risks and assumptions](docs/ASSUMPTIONS.md) | Explicit policies and unsupported claims |
-| [Submission](docs/SUBMISSION.md) | Final deliverable inventory |
-
-## Verified data findings
-
-The files have 23,026 payment records and 54,979 settlement amount records plus one settlement header record. The payment file includes four settlement IDs; the settlement file covers `12395580393` only. Its header control is AUD 212,118.95. Released payments for that settlement, excluding the bank transfer from operating activity, independently total exactly the same amount.
-
-The supplied configs contain overlapping tax routes and inconsistent tax bucketing. A read-only Python probe applying the documented candidate data changes obtains exact summary equality and zero per-bucket differences for all 13,289 matched keys. This is evidence for the Go implementation, not a license to hardcode these values. The production pipeline must reproduce the findings from the untouched inputs and SQL changes.
-
-## Run the implemented pipeline
-
-The supplied data can be processed without external services:
+The reports can also be generated without PostgreSQL:
 
 ```sh
 make before
 make after
 ```
 
-This writes `output/before_fix.xlsx` using the original mapping data in diagnostic mode and `output/after_fix.xlsx` using the data-driven patch file in strict mode. The original files under `workingData/` are not modified.
+This writes `output/before_fix.xlsx` and `output/after_fix.xlsx`. The source and config files under `workingData/` are never modified.
 
-For PostgreSQL persistence, start the included local database and pass its URL:
+## Verification
 
-```sh
-docker compose up -d db
-DATABASE_URL='postgres://recon:recon@localhost:54329/reconciliation?sslmode=disable' \
-  ./bin/recon run --payments workingData/amazon_payments_data.csv \
-  --settlements workingData/amazon_settlements_data.txt \
-  --payment-config workingData/amazon_payment_configs_au_old.csv \
-  --settlement-config workingData/amazon_settlement_configs_au.csv \
-  --settlement-id 12395580393 --output output/before_fix.xlsx \
-  --mode diagnostic-baseline
-```
-
-`MAPPING_FIXES.sql` documents the guarded, versioned SQL replay. Import the original rules, clone the frozen version, apply the fixes to the draft, and then run against the frozen child:
+Source-only checks require no assignment data:
 
 ```sh
-./bin/recon import-config \
-  --payment-config workingData/amazon_payment_configs_au_old.csv \
-  --settlement-config workingData/amazon_settlement_configs_au.csv \
-  --name amazon-au-baseline --postgres-url "$DATABASE_URL"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
-  "select clone_config_version((select id from config_versions where name='amazon-au-baseline'),'amazon-au-fixed-f01-f03','F01/F02/F03 guarded replay');"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
-  "select apply_mapping_fixes((select id from config_versions where name='amazon-au-fixed-f01-f03'));"
+make submission-smoke
 ```
 
-Run the full fresh-database replay with `make end-to-end` after setting `DATABASE_URL`. It retains one shared `source_rows` population, writes the before and after runs, and calls both `verify` and `verify-db`. Use `bin/recon explain --run-id ID` to trace a persisted contribution by field, record reference, or physical source line. `bin/recon verify-db --run-id ID --expected-rows 78006` independently checks source counts, group membership, summary-contribution totals, and strict-run status.
-
-The current `run` command persists source rows, mapping decisions, summary totals, contributions, settlement controls, reconciliation groups, group membership, issues, and report artifact metadata when `DATABASE_URL`/`--postgres-url` is supplied.
-
-For the configured Neon database, `.env` contains the supplied connection settings and is ignored by Git. Load it into the current shell before running database commands:
+With the supplied files installed, run:
 
 ```sh
-set -a; source .env; set +a
-./bin/recon migrate --postgres-url "$DATABASE_URL"
+make reference-test
+make submission-smoke
 ```
 
-Do not commit `.env` or copy its credentials into source files, reports, or logs.
+The full acceptance command is `make end-to-end`. It verifies both persisted runs and fails if ingestion counts, group membership, mapping issues, amount differences, summary differences, bucket differences, or settlement-header controls violate the selected run mode.
 
-## Evidence reproduction available now
+## Schema design and rationale
+
+Both reports are stored in `source_rows`, as required. Derived facts are kept in separate tables at their natural grains so that joining a source row to multiple mapping decisions cannot multiply money.
+
+| Area | Tables | Rationale |
+| --- | --- | --- |
+| Input identity and lineage | `source_files`, `run_files`, `source_rows` | Retains file hash, row ordinal, physical line and byte span, raw and canonical payloads, source identifiers, scope, and exact amount. |
+| Mapping configuration | `config_versions`, `config_version_files`, `mapping_rules`, `config_fix_history` | Stores the configs as data, preserves the original version, records each correction, and prevents mutation after freeze. |
+| Accounting summary | `summary_fields`, `summary_contributions`, `summary_totals` | Keeps independently derived payment and settlement contributions separate and prevents raw many-to-many joins from double counting. |
+| Reconciliation | `recon_groups`, `recon_members` | Aggregates each source by settlement, currency, scope, and expanded key before the full outer join, while retaining every contributing row. |
+| Controls and lifecycle | `runs`, `settlement_controls`, `run_issues`, `report_artifacts`, `schema_migrations` | Provides idempotent run identity, failure/retry state, header controls, diagnostics, report identity, and migration checksums. |
+
+Money is parsed as checked signed cents in Go and stored as constrained exact `numeric` in PostgreSQL. Floating point is not used for matching, routing, totals, or acceptance checks. Composite foreign keys and triggers prevent cross-run, cross-config, and cross-source lineage.
+
+## Assumptions
+
+- The accounting scope is settlement `12395580393`, its Settlement rows, and Released Payment rows for that settlement. All other rows remain ingested and auditable.
+- Payment reconciliation dates use the transaction release instant converted to a UTC calendar date.
+- The supplied fixture is AUD and all accepted amounts have cent precision. Unsupported currency or precision is rejected rather than inferred.
+- The settlement metadata row is retained in `source_rows` as a header control and is not treated as an amount component.
+- The bank transfer is retained and reconciled separately from operating activity.
+- The sample workbook defines report structure only; its zero Summary values are not expected results.
+- The standalone Amazon Statement Summary was not supplied. The implementation compares independently calculated source summaries and the Settlement header without claiming validation against an absent artifact.
+- `description=any` and `amount_description=any` are wildcards. An empty `transaction_type` is a fallback. Equal-specificity baseline matches are reported as ambiguity rather than resolved by arbitrary file order.
+- Reconciliation status is based on key presence after per-source aggregation. Amount equality and summary-bucket equality are separate controls.
+- A payment transfer description has one transaction-scoped normalization alias. The implementation does not use fuzzy matching.
+- Repeated source text is not assumed to be a duplicate transaction. Idempotency is based on file, config, policy, and run identity.
+
+## Mapping corrections
+
+[MAPPING_FIXES.sql](MAPPING_FIXES.sql) contains the actual guarded `DELETE`, `UPDATE`, and history `INSERT` statements, with one commented block per defect. It applies changes to a new child of the frozen baseline, checks the expected old state and affected-row count, records before/after evidence, and freezes the corrected version. It does not update source rows or add balancing amounts.
+
+The complete replay is automated by `make end-to-end`. To execute the standalone SQL after importing a baseline configuration:
 
 ```sh
-python3 tools/profile_inputs.py
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -v baseline_id="$(psql "$DATABASE_URL" -Atqc \
+    "select id from config_versions where name='amazon-au-baseline')" \
+  -v fixed_name=amazon-au-fixed-f01-f03 \
+  -f MAPPING_FIXES.sql
 ```
 
-Requires Python 3.10+ standard library only. It reads `workingData/` and writes the three JSON evidence files under `docs/evidence/`. It does not modify input files, create a database, or produce submission reports. Commands requiring an external PostgreSQL service are explicitly identified in the runbook.
+## Restore the submitted dump
 
-Preserve the original files. The provided financial data and generated artifacts are distributed separately with their committed hashes. Never publish them or copy credentials from `.env` without explicit authorization.
+Restore `output/reconciliation.dump` into an empty PostgreSQL database:
+
+```sh
+PGPASSWORD=recon createdb --host localhost --port 54329 --username recon \
+  reconciliation_review
+export RESTORE_DATABASE_URL='postgres://recon:recon@localhost:54329/reconciliation_review?sslmode=disable'
+pg_restore --no-owner --no-privileges --dbname "$RESTORE_DATABASE_URL" \
+  output/reconciliation.dump
+psql "$RESTORE_DATABASE_URL" -c \
+  'select name, stage, verification_status from runs order by id;'
+```
+
+The investigation history and executed checks are recorded in [PROGRESS.md](PROGRESS.md).

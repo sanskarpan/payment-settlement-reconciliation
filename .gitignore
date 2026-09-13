@@ -7,3 +7,15 @@
 *.log
 tools/__pycache__/
 /tmp/
+
+# Local assignment and builder reference material; not part of the public submission.
+/AGENTS.md
+/ARCHITECTURE.md
+/CHECKLIST.md
+/DESIGN.md
+/SPEC.md
+/SUBMISSION_SHA256SUMS
+/SDE II Assignment*.pdf
+/docs/
+/tools/package_submission.sh
+/tools/profile_inputs.py

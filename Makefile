@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: test build race vet profile reference-test before after end-to-end dump-restore submission-smoke package-submission
+.PHONY: test build race vet profile reference-test before after end-to-end dump-restore submission-smoke
 
 build:
 	$(GO) build -o bin/recon ./cmd/recon
@@ -41,6 +41,3 @@ dump-restore:
 
 submission-smoke:
 	./tools/submission_smoke.sh
-
-package-submission:
-	./tools/package_submission.sh
